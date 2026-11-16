@@ -1,0 +1,10 @@
+name = "reskin-proxy"
+main = "worker.js"
+compatibility_date = "2025-06-01"
+workers_dev = true      # served at https://reskin-proxy.<account>.workers.dev
+preview_urls = false    # no extra per-version preview addresses
+
+[vars]
+# Pages allowed to use this proxy, comma separated (exact origins, no trailing slash).
+# Add your GitHub Pages address here, e.g. https://<your-github-name>.github.io
+ALLOWED_ORIGINS = "https://drakontosc9.github.io,http://localhost:8766,http://127.0.0.1:8766"

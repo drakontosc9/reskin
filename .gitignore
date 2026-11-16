@@ -1,0 +1,7 @@
+# local Claude/editor settings
+.claude/
+# Cloudflare wrangler local state
+.wrangler/
+cloudflare-proxy/.wrangler/
+node_modules/
+__pycache__/
