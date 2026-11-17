@@ -5,3 +5,7 @@
 cloudflare-proxy/.wrangler/
 node_modules/
 __pycache__/
+
+# Supabase database password (local only)
+supabase/.db-password
+supabase/.temp/
