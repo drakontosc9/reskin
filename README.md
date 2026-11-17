@@ -7,7 +7,34 @@ Paste your site — see it reimagined. Your content stays the same; only the des
 - **Advanced** — choose a colour palette and hero type; drag images into logo / hero / feature slots.
 - **Components** — save UI pieces from uiverse.io, MUI and 21st.dev (by link or pasted code) into collections and use them as the design.
 
+- **Component** — preview one component on its own, with variations (your brand colour, your words), and add it to your site.
+- **Build** — your site as a stack of parts: drag to reorder, hide, replace a part with a component or add a new one. A step-by-step
+  *wire up* panel asks what it replaces, what it should say, and when it shows (screens, after scrolling / a few seconds, dates).
+  **Download site** gives you the finished page as one HTML file.
+
 Everything runs in your browser; pages are rendered in sandboxed frames.
+
+## Files
+
+| File | What it is |
+|---|---|
+| `index.html` | the page and its styles |
+| `engine.js` | content extraction, sandbox, animated remix engine, style generator, renderer |
+| `app.js` | Explore / Saved / Advanced / Components tabs |
+| `builder.js`, `builder.css` | Component page + Build tab |
+| `cloud.js`, `config.js` | optional Supabase accounts and sync |
+| `supabase/schema.sql` | database tables + security rules for Supabase |
+
+## Accounts and cloud saving (Supabase, optional)
+
+Without this, projects and components are saved in the visitor's browser. To add sign-in and saving across devices:
+
+1. Create a free project at [supabase.com](https://supabase.com).
+2. In the project: **SQL Editor → New query**, paste `supabase/schema.sql`, **Run**.
+3. **Authentication → URL Configuration**: add your site address (e.g. `https://drakontosc9.github.io/reskin/`) to *Redirect URLs*.
+4. **Project Settings → API**: copy the *Project URL* and the *anon / publishable* key into `config.js`.
+
+People then sign in with an emailed link (no password). The database rules only let each person read and change their own rows.
 
 ## Run locally
 
