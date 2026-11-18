@@ -1456,11 +1456,14 @@ const fontLink = names => 'https://fonts.googleapis.com/css2?' + [...new Set(nam
 let LINKOPT = {};
 function L(h) {
   h = safeHref(h);
-  if (!LINKOPT.preview || /^#/.test(h)) return `href="${esc(h)}"`;
+  if (!LINKOPT.preview) return `href="${esc(h)}"`;
+  // previews are srcdoc frames: a bare "#shop" resolves against the app's own address and loads the app
+  // inside the preview. "about:srcdoc#shop" is the preview itself, so it just scrolls (no scripts needed).
+  if (/^#/.test(h)) return `href="about:srcdoc${esc(h)}"`;
   let abs = h;
   if (!/^(https?:|mailto:|tel:)/i.test(h)) {
-    if (!LINKOPT.base) return `href="#" title="${esc(h)}"`;
-    try { abs = new URL(h, LINKOPT.base).href; } catch { return 'href="#"'; }
+    if (!LINKOPT.base) return `href="about:srcdoc#" title="${esc(h)}"`;
+    try { abs = new URL(h, LINKOPT.base).href; } catch { return 'href="about:srcdoc#"'; }
   }
   return `href="${esc(abs)}" target="_blank" rel="noopener"`;
 }
@@ -1506,7 +1509,7 @@ function renderSite(m, s, opt = {}) {
   s = withOverrides(s);
   LINKOPT = opt;
   const navLinks = m.nav.map(l => `<li><a ${L(l.href)}>${esc(l.text)}</a></li>`).join('');
-  const brand = `<a class="brand" href="#">${m.logo ? `<img class="logo" src="${esc(m.logo.src)}" alt="${esc(m.logo.alt || m.brand)}">` : ''}${m.logo && m.hideName ? '' : esc(m.brand)}</a>`;
+  const brand = `<a class="brand" ${L('#')}>${m.logo ? `<img class="logo" src="${esc(m.logo.src)}" alt="${esc(m.logo.alt || m.brand)}">` : ''}${m.logo && m.hideName ? '' : esc(m.brand)}</a>`;
   const cta = m.navCta ? `<a class="btn btn-sm" ${L(m.navCta.href)}>${esc(m.navCta.text)}</a>` : '';
   const nav = `<header class="nav nav-${s.nav}"><div class="wrap">${brand}${navLinks ? `<ul>${navLinks}</ul>` : ''}${cta}</div></header>`;
 

@@ -109,12 +109,12 @@ function compBlockDoc(comp, opts) {
   return html;
 }
 async function ensureCompTokens(c) {
-  if (c.tokens) return c.tokens;
+  if (c.tokens && 'btn' in c.tokens) return c.tokens;   // older saves lack the full button style — read those again
   try {
     const res = await runSandbox(id => c.kind === 'tsx' ? tsxDoc(c.code, id) : withProbe(c.code, id), 20000);
     const t = res.tokens;
-    c.tokens = { accent: t.accent, btnBg: t.btn && t.btn.bg, bg: t.bg, text: t.text };
-  } catch { c.tokens = { accent: null, btnBg: null }; }
+    c.tokens = { accent: t.accent, btnBg: t.btn && t.btn.bg, bg: t.bg, text: t.text, btn: t.btn || null };
+  } catch { c.tokens = { accent: null, btnBg: null, btn: null }; }
   comps.save();
   return c.tokens;
 }
@@ -130,8 +130,11 @@ const RULE_ATTRS = r => {
   if (r.to) a += ` data-to="${esc(r.to)}"`;
   return a;
 };
-function composeDoc({ edit = false, rules = true, preview = false } = {}) {
+// studio: the Studio runtime's mode (studio.js) — 'edit' | 'try'; otherwise picked from edit / preview
+function composeDoc({ edit = false, rules = true, preview = false, studio = null } = {}) {
   const p = B.project, m = viewModel();
+  const mode = studio || (edit ? 'show' : preview ? 'try' : 'live');
+  const style = p.btnCss ? { ...p.style, extraCss: (p.style.extraCss || '') + '\n' + p.btnCss } : p.style;
   const blocks = p.blocks.filter(b => !b.hidden).map(b => {
     const attrs = RULE_ATTRS(b.rules);
     if (b.kind === 'site') return { id: b.id, ref: b.ref, attrs };
@@ -140,17 +143,21 @@ function composeDoc({ edit = false, rules = true, preview = false } = {}) {
     const doc = compBlockDoc(c, { fill: b.fill, content: b.content, recolor: b.recolor, reportHeight: b.id });
     return { id: b.id, attrs, html: `<iframe class="rk-comp" data-rk="${esc(b.id)}" title="${esc(c.name)}" sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox" loading="lazy" srcdoc="${esc(doc)}" style="display:block;width:100%;height:420px;border:0;background:transparent"></iframe>` };
   });
-  return renderSite(m, p.style, {
+  return renderSite(m, style, {
     preview, base: state.base, blocks, hideNav: p.hideNav, hideFooter: p.hideFooter,
-    extraBody: `<script>(${__rkRuntime})(${edit}, ${rules});<\/script>`,
+    extraBody: `<script>(${__rkRuntime})(${edit}, ${rules});<\/script>` + (typeof studioScript === 'function' ? studioScript(p, mode) : ''),
   });
 }
 // runs inside the composed page: sizes component frames, applies show rules, lets the builder select blocks
 function __rkRuntime(EDIT, RULES) {
   addEventListener('message', function (e) {
     var d = e.data || {};
-    if (d.rkH && d.id) { var f = document.querySelector('iframe[data-rk="' + d.id + '"]'); if (f) f.style.height = Math.min(Math.max(d.rkH, 40), 4000) + 'px'; }
-    if (EDIT && d.rkSel !== undefined) blocks.forEach(function (b) { var on = b.getAttribute('data-block') === d.rkSel; b.classList.toggle('rk-sel', on); if (on && d.scroll) b.scrollIntoView({ behavior: 'smooth', block: 'center' }); });
+    if (d.rkH && d.id) {
+      var f = document.querySelector('iframe[data-rk="' + d.id + '"]');
+      // full-screen components (100vh) grow with their frame: after a few growths in a row, stop following them
+      if (f) { var h = Math.min(Math.max(d.rkH, 40), 1600), cur = parseFloat(f.style.height) || 0; f._g = h > cur ? (f._g || 0) + 1 : 0; if (f._g <= 4) f.style.height = h + 'px'; }
+    }
+    if (EDIT && d.rkSel !== undefined) blocks.forEach(function (b) { var on = b.getAttribute('data-block') === d.rkSel; b.classList.toggle('rk-sel', on); if (on && d.scroll) (function (r) { scrollTo({ top: Math.max(0, r.top + scrollY - (innerHeight - r.height) / 2), behavior: 'smooth' }); })(b.getBoundingClientRect()); });
   });
   var t0 = Date.now(), blocks = Array.prototype.slice.call(document.querySelectorAll('.rk-block'));
   var st = document.createElement('style');
@@ -183,7 +190,8 @@ function __rkRuntime(EDIT, RULES) {
 }
 addEventListener('message', e => {
   const d = e.data || {};
-  if (d.rkSelect && state.view === 'build') { selectBlock(d.rkSelect, false); }
+  const pv = $('bdFrame') && $('bdFrame').querySelector('iframe');
+  if (d.rkSelect && state.view === 'build' && pv && e.source === pv.contentWindow) { selectBlock(d.rkSelect, false); }
 });
 
 /* ------------------------------------------------------------------ Build tab */
@@ -244,7 +252,7 @@ function renderBuild() {
   $('bdNav').onchange = e => { p.hideNav = !e.target.checked; saveProject(); renderBuildPreview(); };
   $('bdFoot').onchange = e => { p.hideFooter = !e.target.checked; saveProject(); renderBuildPreview(); };
   $('bdAdd').onclick = () => startWizard({ after: B.sel });
-  $('bdReset').onclick = () => { if (confirm('Put the page back to just your site’s own sections? Added components are removed.')) { p.blocks = siteBlocks(state.model); B.sel = null; B.wizard = null; saveProject(); renderBuild(); } };
+  $('bdReset').onclick = () => { if (confirm('Put the page back to just your site’s own sections? Added components are removed.')) { p.blocks = siteBlocks(state.model); p.edits = []; p.btnCss = ''; p.btnFrom = null; B.sel = null; B.wizard = null; saveProject(); renderBuild(); } };
   $('bdDl').onclick = () => {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([composeDoc({ preview: false })], { type: 'text/html' }));

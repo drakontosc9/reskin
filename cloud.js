@@ -64,7 +64,7 @@ const Cloud = (() => {
       store.set('reskin.components', comps.list);
       syncComponents(comps.list);
       toast('Synced with your account');
-      if (state.view === 'components' || state.view === 'build' || state.view === 'component') renderGrid();
+      if (['components', 'build', 'component', 'studio'].includes(state.view)) renderGrid();
     } catch (e) { toast(`Sync failed: ${e.message || e}`, 5000); }
   }
 

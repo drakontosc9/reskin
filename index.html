@@ -202,24 +202,26 @@
   .sandbox-runner{position:fixed;left:0;top:0;width:1280px;height:900px;border:0;opacity:.001;pointer-events:none;z-index:-1}
   @media (max-width:900px){.inputs{grid-template-columns:1fr}}
   @media (max-width:640px){
-    .top{padding:14px 16px}.results{padding:0 16px 60px}.intro{padding:0 16px}
+    .top{padding:14px 16px;flex-wrap:wrap;gap:10px}.tabs{order:3;width:100%;overflow-x:auto;scrollbar-width:none}.tabs button{flex:none}.results{padding:0 16px 60px}.intro{padding:0 16px}
     .grid{grid-template-columns:1fr}
     .tsum{flex-direction:column;align-items:flex-start}.tsum .tprev{width:100%}
     .modal{padding:0}.mbar{border-radius:0}.mstage{border-radius:0}
   }
 </style>
 <link rel="stylesheet" href="builder.css">
+<link rel="stylesheet" href="studio.css">
 </head>
 <body>
 <header class="top">
   <div class="logo"><i></i>reskin</div>
   <div class="tabs" id="tabs">
     <button data-view="all" class="on">Explore</button>
+    <button data-view="studio">Studio ✦</button>
     <button data-view="saved">Saved <span id="savedCount"></span></button>
     <button data-view="advanced">Advanced</button>
     <button data-view="components">Components</button>
     <button data-view="component">Component</button>
-    <button data-view="build">Build ✦</button>
+    <button data-view="build">Build</button>
   </div>
 </header>
 
@@ -272,6 +274,7 @@
   <div class="comps" id="comps" hidden></div>
   <div id="compView" data-viewbox="component" hidden></div>
   <div id="buildView" data-viewbox="build" hidden></div>
+  <div id="studioView" data-viewbox="studio" hidden></div>
   <div class="more" id="moreWrap"><button class="primary" id="more">Generate more styles</button></div>
 </section>
 
@@ -294,6 +297,7 @@
 <script src="engine.js"></script>
 <script src="app.js"></script>
 <script src="builder.js"></script>
+<script src="studio.js"></script>
 <script src="config.js"></script>
 <script src="cloud.js"></script>
 </body>

@@ -244,9 +244,10 @@ async function setView(v) {
   if (v === 'components' || v === 'component') { $('results').hidden = false; renderGrid(); $('results').scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
   if (!state.model) {
     try { busy('Reading your site…'); if (!await loadSource()) return; } catch (e) { toast(e.message, 4000); return; } finally { busy(null); }
-    $('results').hidden = false;
   }
+  $('results').hidden = false;   // the site may have been read elsewhere (e.g. opening a project), so always show the workspace
   renderGrid();
+  if (VIEWS[v]) $('results').scrollIntoView({ behavior: 'smooth', block: 'start' });   // Studio / Build / Component live below the intro
 }
 
 function renderChips() {
@@ -288,6 +289,8 @@ function renderGrid() {
     $('chips').style.display = 'none'; $('moreWrap').style.display = 'none';
     $('banner').innerHTML = state.view === 'build'
       ? `<h2>Build your site</h2><span class="found">Move parts around, swap in components, and choose when each part shows.</span>`
+      : state.view === 'studio'
+      ? `<h2>Studio</h2><span class="found">Pick a template, collect components, then drop them onto your page.</span>`
       : `<h2>Component</h2><span class="found">Preview one component on its own, try variations, then add it to your site.</span>`;
     VIEWS[state.view]();
     updateSavedCount();
@@ -577,7 +580,7 @@ async function importByLink(raw) {
   if (host === '21st.dev') {
     const page = await siteText(url.href);
     const blocks = [...page.matchAll(/<pre class="shiki[^"]*"[^>]*><code>([\s\S]*?)<\/code><\/pre>/g)].map(m => {
-      const d = document.createElement('div'); d.innerHTML = m[1].replace(/<\/span>\n/g, '</span>\n'); return d.textContent;
+      return new DOMParser().parseFromString(m[1], 'text/html').body.textContent;
     });
     if (!blocks.length) throw new Error('No code found on that 21st.dev page');
     const parts = url.pathname.split('/').filter(Boolean);
@@ -730,6 +733,8 @@ const sandboxFor = s => (s.live ? 'allow-scripts ' : '') + 'allow-popups allow-p
 const PREVIEW_CSS = '<style>@media (max-width:480px){html{scrollbar-width:none}html::-webkit-scrollbar{display:none}}</style>';
 const injectPreviewCss = html => { const i = html.toLowerCase().indexOf('</head>'); return i >= 0 ? html.slice(0, i) + PREVIEW_CSS + html.slice(i) : PREVIEW_CSS + html; };
 function setModalDoc(html, s) {
+  const built = !!(state.current && state.current._built);
+  $('mSave').hidden = built; $('mVar').hidden = built;
   // a fresh iframe each time — reusing one and swapping srcdoc could leave it blank
   const f = document.createElement('iframe');
   f.setAttribute('sandbox', sandboxFor(s)); f.title = 'Full preview';
@@ -832,7 +837,7 @@ $('chips').onclick = e => {
 $('tabs').onclick = e => { const b = e.target.closest('button'); if (b) setView(b.dataset.view); };
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && !$('modal').hidden) closeModal();
-  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) generate();
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && (!VIEWS[state.view] || e.target.closest && e.target.closest('.intro'))) generate();
 });
 
 $('src').value = SAMPLE;
