@@ -262,7 +262,6 @@ function __rkStudio(EDITS, MODE) {
     var f = document.createElement('iframe');
     f.setAttribute('data-rke', id); f.setAttribute('sandbox', 'allow-scripts allow-popups allow-popups-to-escape-sandbox'); f.title = title;
     f.style.cssText = 'position:absolute;left:0;top:0;border:0;background:transparent;transform-origin:0 0;color-scheme:normal';
-    if (MODE === 'edit') f.style.pointerEvents = 'none';
     f.srcdoc = doc; return f;
   }
 
@@ -503,14 +502,6 @@ function __rkStudio(EDITS, MODE) {
       '.rk-tag{position:fixed;z-index:2147483001;pointer-events:none;font:600 11.5px/1 Inter,system-ui,sans-serif;background:#1d1b19;color:#fff;padding:5px 8px;border-radius:6px;white-space:nowrap;max-width:60vw;overflow:hidden;text-overflow:ellipsis;display:none}' : '');
   document.head.appendChild(st);
 
-  if (MODE === 'edit') {
-    // added components are frames: in the editor, clicks go to the page so they can be chosen, right-clicked, removed
-    document.querySelectorAll('iframe.rk-comp').forEach(function (f) { f.style.pointerEvents = 'none'; f.addEventListener('load', function () { if (PICK_ID && frameOf(PICK_ID) === f) setTimeout(function () { setPick(PICK_ID, PICK_HOW); }, 300); }); });
-    var fst = document.createElement('style');
-    fst.textContent = 'body[data-rk-focusing] .rk-block:not([data-rk-focus-on]),body[data-rk-focusing] header.nav:not([data-rk-focus-on]),body[data-rk-focusing] footer:not([data-rk-focus-on]),body[data-rk-focusing] aside.side:not([data-rk-focus-on]){display:none!important}' +
-      'body[data-rk-focusing]{padding:28px 0!important}body[data-rk-focusing] [data-rk-focus-on]{outline:2px dashed rgba(47,107,255,.45);outline-offset:6px}';
-    document.head.appendChild(fst);
-  }
   if (MODE !== 'edit') {
     document.addEventListener('click', function (ev) {
       var el = ev.target.closest && ev.target.closest('[data-rk-edit]'); if (!el) return;
@@ -520,23 +511,105 @@ function __rkStudio(EDITS, MODE) {
     return;
   }
 
-  // ---- editor: hover, click to select, drop components
-  var tag = document.createElement('div'); tag.className = 'rk-tag'; document.body.appendChild(tag);
-  var hov = null, drop = null;
-  function mark(attr, el, old) { if (old && old !== el) old.removeAttribute(attr); if (el) el.setAttribute(attr, ''); return el; }
-  function describe(t) {
-    if (t.editId) return 'Your change — click to edit · double-click to use it';
-    var n = t.info.kind === 'section' ? 'Section' : t.info.kind.charAt(0).toUpperCase() + t.info.kind.slice(1);
-    return n + (t.info.label ? ' · ' + t.info.label.slice(0, 40) : '');
-  }
-  function showTag(t, x, y, pre) {
-    if (!t) { tag.style.display = 'none'; return; }
-    tag.textContent = (pre || '') + describe(t); tag.style.display = 'block';
-    tag.style.left = Math.min(x + 14, innerWidth - tag.offsetWidth - 8) + 'px'; tag.style.top = Math.max(y - 30, 6) + 'px';
-  }
+  // ---- the stage: components work as they normally do; while something is dragged, the page shows
+  //      exactly where it would land (replace a button · add it here · a new section between two)
+  function mk(cls) { var d = document.createElement('div'); d.className = cls; document.body.appendChild(d); return d; }
+  var sst = document.createElement('style');
+  sst.textContent = 'body.rk-dragging iframe{pointer-events:none!important}' +
+    '.rk-ol{position:fixed;z-index:2147483002;pointer-events:none;border:3px solid #2f6bff;border-radius:12px;background:rgba(47,107,255,.08);display:none;transition:left .1s,top .1s,width .1s,height .1s}' +
+    '.rk-line{position:fixed;z-index:2147483002;pointer-events:none;height:4px;margin-top:-2px;border-radius:4px;background:#2f6bff;box-shadow:0 0 0 5px rgba(47,107,255,.16);display:none;transition:top .1s}' +
+    '.rk-pill{position:fixed;z-index:2147483003;pointer-events:none;font:600 12.5px/1 Inter,system-ui,sans-serif;background:#2f6bff;color:#fff;padding:7px 12px;border-radius:99px;box-shadow:0 6px 20px rgba(47,107,255,.35);white-space:nowrap;display:none;transform:translate(-50%,-50%)}' +
+    '.rk-bar{position:fixed;z-index:2147483004;display:none;gap:2px;padding:4px;background:#1d1b19;border-radius:11px;box-shadow:0 10px 28px rgba(0,0,0,.32)}' +
+    '.rk-bar button{border:0;background:none;color:#fff;font:600 12px/1 Inter,system-ui,sans-serif;padding:8px 10px;border-radius:8px;cursor:pointer;white-space:nowrap}.rk-bar button:hover{background:rgba(255,255,255,.15)}' +
+    '.rk-hl{outline:2px dashed rgba(47,107,255,.55)!important;outline-offset:4px}' +
+    '.rk-tag{position:fixed;z-index:2147483001;pointer-events:none;font:600 11.5px/1 Inter,system-ui,sans-serif;background:#1d1b19;color:#fff;padding:5px 8px;border-radius:6px;display:none}';
+  document.head.appendChild(sst);
+  var ol = mk('rk-ol'), line = mk('rk-line'), pill = mk('rk-pill'), bar = mk('rk-bar'), tag = mk('rk-tag');
   function plain(t) { return t ? { addr: t.addr || null, info: t.info || null, editId: t.editId || null } : null; }
-  document.addEventListener('mousemove', function (ev) { var t = targetOf(ev.target); hov = mark('data-rk-hov', t && t.el, hov); if (!t && hov) { hov.removeAttribute('data-rk-hov'); hov = null; } showTag(t, ev.clientX, ev.clientY); });
-  document.addEventListener('mouseleave', function () { if (hov) hov.removeAttribute('data-rk-hov'); hov = null; showTag(null); });
+  function blocksOnPage() { return Array.prototype.filter.call(document.querySelectorAll('.rk-block'), function (b) { return b.offsetHeight > 0; }); }
+  var clicky = function (k) { return k === 'button' || k === 'link'; };
+  function intentAt(x, y, node) {
+    var bs = blocksOnPage(), EDGE = 30;
+    for (var i = 0; i < bs.length; i++) {
+      var r = bs[i].getBoundingClientRect();
+      if (y < r.top - 2 || y > r.bottom + 2) continue;
+      if (y - r.top < EDGE && i > 0) return { kind: 'gap', scope: bs[i - 1].getAttribute('data-block'), y: r.top, x0: r.left, x1: r.right };
+      if (r.bottom - y < EDGE) return { kind: 'gap', scope: bs[i].getAttribute('data-block'), y: r.bottom, x0: r.left, x1: r.right };
+      break;
+    }
+    var t = targetOf(node); if (!t) return null;
+    if (t.editId) return { kind: 'swap', editId: t.editId, el: t.el, label: 'Swap this component' };
+    var k = t.addr.kind;
+    if (clicky(k)) return { kind: 'replace', addr: t.addr, info: t.info, el: t.el, label: 'Replace “' + (t.info.label || 'button').slice(0, 28) + '”' };
+    if (k === 'section') {
+      if (t.el.querySelector('iframe.rk-comp')) return { kind: 'swapblock', scope: t.addr.scope, el: t.el, label: 'Swap this component' };
+      var rr = t.el.getBoundingClientRect();
+      return { kind: 'gap', scope: t.addr.scope, y: rr.bottom, x0: rr.left, x1: rr.right };
+    }
+    return { kind: 'here', addr: t.addr, info: t.info, el: t.el, label: 'Add it here' };
+  }
+  function hideDrop() { ol.style.display = line.style.display = pill.style.display = 'none'; }
+  function showDrop(it) {
+    hideDrop(); if (!it) return;
+    if (it.kind === 'gap') {
+      line.style.display = 'block'; line.style.left = (it.x0 + 12) + 'px'; line.style.width = Math.max(0, it.x1 - it.x0 - 24) + 'px'; line.style.top = it.y + 'px';
+      pill.textContent = '＋ New section here'; pill.style.display = 'block'; pill.style.left = ((it.x0 + it.x1) / 2) + 'px'; pill.style.top = it.y + 'px';
+      return;
+    }
+    var r = it.el.getBoundingClientRect();
+    ol.style.display = 'block'; ol.style.left = (r.left - 6) + 'px'; ol.style.top = (r.top - 6) + 'px'; ol.style.width = (r.width + 12) + 'px'; ol.style.height = (r.height + 12) + 'px';
+    pill.textContent = it.label; pill.style.display = 'block'; pill.style.left = (r.left + r.width / 2) + 'px'; pill.style.top = Math.max(16, r.top - 6) + 'px';
+  }
+  var dragT = null;
+  function dragging(on) { document.body.classList.toggle('rk-dragging', !!on); if (!on) hideDrop(); hideBar(); }
+  document.addEventListener('dragenter', function () { dragging(true); });
+  document.addEventListener('dragover', function (ev) {
+    ev.preventDefault(); if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'copy';
+    dragging(true); clearTimeout(dragT); dragT = setTimeout(function () { dragging(false); }, 600);
+    showDrop(intentAt(ev.clientX, ev.clientY, ev.target));
+  });
+  document.addEventListener('dragleave', function (ev) { if (!ev.relatedTarget) { hideDrop(); } });
+  document.addEventListener('drop', function (ev) {
+    ev.preventDefault();
+    var it = intentAt(ev.clientX, ev.clientY, ev.target); dragging(false);
+    if (!it) return;
+    var dt = ev.dataTransfer, files = dt && dt.files ? Array.prototype.slice.call(dt.files) : [];
+    var text = dt ? (dt.getData('text/uri-list') || dt.getData('text/plain') || '') : '';
+    var send = { kind: it.kind, addr: it.addr || null, info: it.info || null, editId: it.editId || null, scope: it.scope || null };
+    parent.postMessage({ rkDrop: send, files: files, text: text }, '*');
+  });
+
+  // ---- a small toolbar on whatever component you point at
+  var barFor = null, barT = null;
+  function hideBar() { bar.style.display = 'none'; barFor = null; document.querySelectorAll('.rk-hl').forEach(function (x) { x.classList.remove('rk-hl'); }); }
+  function boxOf(node) {
+    if (!node || !node.closest) return null;
+    var e = node.closest('[data-rk-edit]'); if (e && e.querySelector('iframe')) return { el: e, editId: e.getAttribute('data-rk-edit') };
+    var b = node.closest('.rk-block'); if (b && b.querySelector('iframe.rk-comp') && (node.tagName === 'IFRAME' || node === b)) return { el: b, blockId: b.getAttribute('data-block') };
+    return null;
+  }
+  function showBar(bx) {
+    if (barFor && barFor.el === bx.el) return;
+    hideBar(); barFor = bx; bx.el.classList.add('rk-hl');
+    var tile = bx.editId && bx.el.classList.contains('rk-tile');
+    bar.innerHTML = (tile ? '<button data-a="size" title="Change its size">⤢ Size</button>' : '') + '<button data-a="swap" title="Drag another component onto it, or pick one">⇄ Swap</button><button data-a="remove" title="Take it off the page">✕ Remove</button>';
+    var r = bx.el.getBoundingClientRect();
+    bar.style.display = 'flex'; bar.style.left = Math.max(6, Math.min(r.right - bar.offsetWidth - 6, innerWidth - bar.offsetWidth - 6)) + 'px'; bar.style.top = Math.max(6, r.top + 8) + 'px';
+  }
+  document.addEventListener('mouseover', function (ev) {
+    if (document.body.classList.contains('rk-dragging')) return;
+    if (bar.contains(ev.target)) { clearTimeout(barT); return; }
+    var bx = boxOf(ev.target);
+    if (bx) { clearTimeout(barT); showBar(bx); } else { clearTimeout(barT); barT = setTimeout(hideBar, 350); }
+  });
+  addEventListener('scroll', function () { if (barFor) { var r = barFor.el.getBoundingClientRect(); bar.style.top = Math.max(6, r.top + 8) + 'px'; } }, { passive: true });
+  bar.addEventListener('click', function (ev) {
+    var b = ev.target.closest('button'); if (!b || !barFor) return;
+    parent.postMessage({ rkTool: { action: b.getAttribute('data-a'), editId: barFor.editId || null, blockId: barFor.blockId || null } }, '*');
+    hideBar();
+  });
+
+  // ---- words: double-click to type them; right-click for the few things you might want
   var editing = null, before = '';
   var TEXTY = { heading: 1, text: 1, button: 1, link: 1, node: 1 };
   function startText(el, addr) {
@@ -559,64 +632,37 @@ function __rkStudio(EDITS, MODE) {
   }, true);
   document.addEventListener('focusout', function (ev) { if (editing && ev.target === editing) finishText(true); }, true);
   document.addEventListener('click', function (ev) {
-    if (editing && editing.contains(ev.target)) return;   // placing the caret while typing
-    ev.preventDefault(); ev.stopPropagation();
+    if (editing && editing.contains(ev.target)) return;
     if (editing) finishText(true);
-    var t = targetOf(ev.target); if (!t) return;
-    parent.postMessage({ rkPick: plain(t) }, '*');
+    if (ev.target.closest && ev.target.closest('a[href]')) ev.preventDefault();   // your page's own links don't navigate the stage
   }, true);
-  // double-click a component to use it (open a folder, flip a card…); click anywhere else to go back to editing
-  var playing = null;
-  function stopPlay() { if (!playing) return; playing.f.style.pointerEvents = 'none'; playing.box.removeAttribute('data-rk-playing'); playing = null; showTag(null); }
-  function play(box) {
-    var f = box.querySelector('iframe'); if (!f) return false;
-    stopPlay(); playing = { f: f, box: box };
-    f.style.pointerEvents = 'auto'; box.setAttribute('data-rk-playing', '');
-    tag.textContent = '▶ Using it — click outside to go back to editing'; tag.style.display = 'block';
-    var r = box.getBoundingClientRect(); tag.style.left = Math.max(8, r.left) + 'px'; tag.style.top = Math.max(6, r.top + 6) + 'px';
-    return true;
-  }
-  document.addEventListener('mousedown', function (ev) { if (playing && !playing.box.contains(ev.target)) stopPlay(); }, true);
-  addEventListener('keydown', function (ev) { if (ev.key === 'Escape') stopPlay(); });
   document.addEventListener('dblclick', function (ev) {
-    var t = targetOf(ev.target); if (!t) return;
-    if (t.editId && t.el.querySelector('iframe')) { ev.preventDefault(); play(t.el); return; }
-    if (t.addr && t.addr.kind === 'section' && t.el.querySelector('iframe.rk-comp')) { ev.preventDefault(); play(t.el); return; }
-    if (!t.addr || !TEXTY[t.addr.kind]) return;
+    var t = targetOf(ev.target); if (!t || !t.addr || !TEXTY[t.addr.kind]) return;
     ev.preventDefault(); startText(t.el, t.addr);
   }, true);
+  document.addEventListener('mousemove', function (ev) {
+    if (editing || document.body.classList.contains('rk-dragging')) { tag.style.display = 'none'; return; }
+    var t = targetOf(ev.target);
+    if (t && t.addr && TEXTY[t.addr.kind]) { tag.textContent = 'Double-click to edit the words'; tag.style.display = 'block'; tag.style.left = Math.min(ev.clientX + 14, innerWidth - tag.offsetWidth - 8) + 'px'; tag.style.top = Math.max(ev.clientY - 30, 6) + 'px'; }
+    else tag.style.display = 'none';
+  });
+  document.addEventListener('mouseleave', function () { tag.style.display = 'none'; });
   document.addEventListener('contextmenu', function (ev) {
-    ev.preventDefault();
-    if (editing) finishText(true);
     var t = targetOf(ev.target); if (!t) return;
-    hov = mark('data-rk-hov', t.el, hov);
-    var hid = t.el.style.opacity === '0.28';
-    parent.postMessage({ rkCtx: plain(t), x: ev.clientX, y: ev.clientY, hidden: hid }, '*');
+    ev.preventDefault(); if (editing) finishText(true);
+    parent.postMessage({ rkCtx: plain(t), x: ev.clientX, y: ev.clientY, hidden: t.el.style.opacity === '0.28' }, '*');
   }, true);
   document.addEventListener('submit', function (ev) { ev.preventDefault(); }, true);
-  document.addEventListener('dragover', function (ev) {
-    ev.preventDefault(); if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'copy';
-    var t = targetOf(ev.target);
-    drop = mark('data-rk-drop', t && t.el, drop); if (!t && drop) { drop.removeAttribute('data-rk-drop'); drop = null; }
-    showTag(t, ev.clientX, ev.clientY, 'Drop on ');
-  });
-  document.addEventListener('dragleave', function (ev) { if (!ev.relatedTarget) { if (drop) drop.removeAttribute('data-rk-drop'); drop = null; showTag(null); } });
-  document.addEventListener('drop', function (ev) {
-    ev.preventDefault();
-    var t = targetOf(ev.target);
-    if (drop) drop.removeAttribute('data-rk-drop'); drop = null; showTag(null);
-    if (t) parent.postMessage({ rkDrop: plain(t) }, '*');
-  });
   addEventListener('message', function (ev) {
     var d = ev.data || {};
-    if ('rkOnly' in d) { ONLY = d.rkOnly ? ['button', 'link'] : null; }
+    if ('rkDragging' in d) dragging(d.rkDragging);
     if (d.rkEditText) { var te = find(d.rkEditText); if (te) startText(te, d.rkEditText); }
     if ('rkHi' in d) {
-      document.querySelectorAll('[data-rk-on]').forEach(function (x) { x.removeAttribute('data-rk-on'); });
       var el = null, h = d.rkHi;
       if (h && h.editId) el = document.querySelector('[data-rk-edit="' + h.editId + '"]');
       else if (h && h.addr) el = find(h.addr);
-      if (el) { el.setAttribute('data-rk-on', ''); if (d.scroll) goTo(el, 'center'); }
+      if (el && d.scroll) goTo(el, 'center');
+      if (el && d.flash) { el.classList.add('rk-hl'); setTimeout(function () { el.classList.remove('rk-hl'); }, 1600); }
     }
   });
 }
@@ -692,7 +738,7 @@ function renderStudio() {
   if (!state.model) { box.innerHTML = '<div class="bx-panel bx-empty">Paste your site on the Explore tab first.</div>'; return; }
   ensureProject(); projectEdits();
   $('banner').innerHTML = '';
-  if (B.pendingWizard) S.mode = 'blocks';
+  S.mode = 'edit'; S.tryIt = false; B.pendingWizard = null;   // one stage: drag components onto your page
   const T = state.tgt && state.tgt.tokens;
   if (T && state.mood === 'target' && S.matched !== T.name) {
     S.matched = T.name;
@@ -709,11 +755,9 @@ const goWs = ws => { if (ws === 'component') return setView('library'); S.ask = 
 
 // the stage's toolbar, shared by every mode
 function stToolbar() {
-  const hint = S.mode === 'blocks' ? 'drag parts to reorder, click one to change it' : S.mode === 'links' ? 'wire what’s clicked to where it goes' : S.tryIt ? 'clicks work like on the real site' : 'click, right-click or drop a component on any part';
+  const hint = 'drag a component onto your page · double-click words to edit them';
   return `<div class="bx-h st-tool"><h3>${esc(B.project.name)} <small>· ${hint}</small></h3>
     <div class="bx-row">
-      <div class="seg" id="stMode">${[['edit', 'Edit'], ['blocks', 'Blocks'], ['links', '🔗 Links']].map(([k, l]) => `<button data-m="${k}" class="${S.mode === k ? 'on' : ''}">${l}</button>`).join('')}</div>
-      ${S.mode === 'edit' ? `<label class="found st-try" title="Click buttons to see what they do"><input type="checkbox" id="stTry" ${S.tryIt ? 'checked' : ''}> Try it</label>` : ''}
       <div class="seg" id="stDev"><button data-d="desktop" class="${S.device === 'desktop' ? 'on' : ''}">Desktop</button><button data-d="mobile" class="${S.device === 'mobile' ? 'on' : ''}">Mobile</button></div>
       <button class="icon st-gear" id="stGear" title="Page settings: colours, hero, images">⚙</button>
       <button class="ghost" id="stOpen">Open full page</button>
@@ -722,8 +766,6 @@ function stToolbar() {
 }
 function wireStToolbar() {
   const p = B.project;
-  $('stMode').onclick = e => { const b = e.target.closest('button'); if (!b) return; S.mode = b.dataset.m; S.wireFrom = null; S.ask = null; S.picking = null; if (S.mode !== 'edit') S.tryIt = false; renderStudio(); };
-  if ($('stTry')) $('stTry').onchange = e => { S.tryIt = e.target.checked; renderEditorWs(); };
   $('stDev').onclick = e => {
     const b = e.target.closest('button'); if (!b) return; S.device = B.device = b.dataset.d;
     $('stDev').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
@@ -854,63 +896,108 @@ function applyStyleDialog(c) {
 
 /* ---- 3. Editor ---- */
 function renderEditorWs() {
-  const p = B.project, body = $('stBody');
-  const changes = [
-    ...p.edits.map(e => ({ id: e.id, t: describeEdit(e), edit: true })),
-    ...p.blocks.filter(b => b.kind === 'comp').map(b => ({ id: b.id, t: `“${b.label}” ${b.replaces ? 'replaces the section “' + labelOfRef(b.replaces) + '”' : 'is added as a new section'}.`, block: true })),
-    ...(p.btnCss ? [{ id: '__btn', t: `All buttons are styled like “${(compById(p.btnFrom) || {}).name || 'a component'}”.`, btn: true }] : []),
-  ];
+  const body = $('stBody');
   body.innerHTML = `
-    <div class="st-ed">
+    <div class="st-ed st-one">
       <div class="bx-panel st-rail">
-        <div class="bx-h"><h3>Components <small>· drag onto your page, or click one then click the page</small></h3></div>
-        <div class="st-chips" id="stRail">${comps.list.length ? '' : '<div class="bx-empty">No components yet.<br><br><button class="primary" id="stGoComp">Save some first</button></div>'}</div>
-        <div class="bx-h" style="border-top:1px solid var(--line)"><h3>Changes <small>· ${changes.length}</small></h3></div>
-        <div class="st-changes">${changes.length ? changes.map(c => `<button class="st-chg" data-chg="${c.id}" data-k="${c.edit ? 'e' : c.block ? 'b' : 'btn'}">${esc(c.t)}</button>`).join('') : '<p class="st-muted">Nothing yet. Drag a component onto your page.</p>'}</div>
+        <div class="bx-h"><h3>Components <small>· drag one onto your page</small></h3></div>
+        <form class="st-add" id="stAdd">
+          <input id="stAddIn" placeholder="Paste a link or code — uiverse, 21st.dev, React Bits, MUI…" autocomplete="off">
+          <div class="bx-row"><button class="primary" id="stAddGo" type="submit">Add</button><button class="ghost" type="button" id="stAddFile">Upload a file</button></div>
+          <p class="st-muted">Or drop a file — or drag a component’s link from another tab — straight onto your page.</p>
+        </form>
+        ${S.swapFor ? `<div class="st-banner st-swapbar"><span>⇄ Pick the component to swap in</span><button class="ghost" id="stSwapX" type="button">Cancel</button></div>` : ''}
+        <div class="st-chips" id="stRail">${comps.list.length ? '' : '<div class="bx-empty">No components yet — paste a link above.</div>'}</div>
       </div>
-      <div class="bx-panel st-prev">
-        ${stToolbar()}
-        ${S.innerPick && editById(S.innerPick) ? `<div class="st-banner">🔗 Click the part of “${esc((compById(editById(S.innerPick).compId) || {}).name || 'it')}” to link. Alt-click uses it normally (e.g. open a folder first). <button class="ghost" id="stInnerX">Done</button></div>` : ''}
-        ${S.focus ? `<div class="st-banner st-focusbar"><span>✎ Editing <b>${esc(S.focus.label)}</b> in detail — click any part of it${S.focus.frame ? ' (Alt-click uses it normally)' : ', double-click text to type'}.</span> <button class="primary" id="stFocusX" style="height:30px;padding:0 12px;font-size:12.5px">← Back to the page</button></div>` : ''}
-        ${S.picking ? '<div class="st-banner">👆 Click the button on your page that should open it. <button class="ghost" id="stPickX">Cancel</button></div>' : S.armed && compById(S.armed) ? `<div class="st-banner">👆 Now click where “${esc(compById(S.armed).name)}” goes on your page. <button class="ghost" id="stArmX">Cancel</button></div>` : ''}
-        <div class="st-stage"><div class="bx-frame ${S.device}" id="stFrame"></div><div class="st-nodes" id="stNodes" ${(S.mode === 'links') ? '' : 'hidden'}></div></div>
+      <div class="bx-panel st-prev">${stToolbar()}
+        <div class="st-stage"><div class="bx-frame ${S.device}" id="stFrame"></div><div class="st-drop-hint" id="stDropHint">Drop it on your page</div></div>
       </div>
-      <div class="bx-panel st-side" id="stSide"></div>
     </div>`;
-  // component rail
   const rail = $('stRail');
   comps.list.forEach(c => {
     const el = document.createElement('div');
-    el.className = 'st-chip' + (S.flash === c.id ? ' flash' : ''); el.draggable = true; el.dataset.c = c.id;
+    el.className = 'st-chip' + (S.flash === c.id ? ' flash' : '') + (S.swapFor ? ' pickable' : ''); el.draggable = true; el.dataset.c = c.id;
     el.innerHTML = `<div class="th"></div><span>${esc(c.name)}</span><small>${esc(c.source)}</small>`;
-    const f = document.createElement('iframe'); f.setAttribute('sandbox', 'allow-scripts'); f.setAttribute('tabindex', '-1'); f.setAttribute('loading', 'lazy');
-    f.srcdoc = compThumbDoc(c); const th = el.querySelector('.th'); th.appendChild(f);
-    const fit = () => { if (th.clientWidth) f.style.transform = `scale(${th.clientWidth / 600})`; }; fit(); new ResizeObserver(fit).observe(th);
-    el.addEventListener('dragstart', e => { S.drag = c.id; e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData('text/plain', 'reskin-component:' + c.id); el.classList.add('drag'); $('stFrame').classList.add('dropping'); });
-    el.addEventListener('dragend', () => { el.classList.remove('drag'); const fr = $('stFrame'); if (fr) fr.classList.remove('dropping'); setTimeout(() => { S.drag = null; }, 400); });
-    if (S.armed === c.id) el.classList.add('armed');
+    const th = el.querySelector('.th');
+    if (c.icon) th.innerHTML = `<img alt="" src="data:image/svg+xml;charset=utf-8,${encodeURIComponent(c.svg)}" style="width:44px;height:44px;margin:auto;display:block;position:relative;top:50%;transform:translateY(-50%)">`;
+    else { const f = document.createElement('iframe'); f.setAttribute('sandbox', 'allow-scripts'); f.setAttribute('tabindex', '-1'); f.setAttribute('loading', 'lazy'); f.srcdoc = compThumbDoc(c); th.appendChild(f); const fit = () => { if (th.clientWidth) f.style.transform = `scale(${th.clientWidth / 600})`; }; fit(); new ResizeObserver(fit).observe(th); }
+    el.addEventListener('dragstart', e => { S.drag = c.id; e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData('text/plain', 'reskin-component:' + c.id); el.classList.add('drag'); $('stFrame').classList.add('dropping'); stPost({ rkDragging: true }); });
+    el.addEventListener('dragend', () => { el.classList.remove('drag'); const fr = $('stFrame'); if (fr) fr.classList.remove('dropping'); stPost({ rkDragging: false }); setTimeout(() => { S.drag = null; }, 400); });
     el.onclick = () => {
-      if (S.replaceAt) { const r = S.replaceAt; S.replaceAt = null; return r.editId ? startAsk({ compId: c.id, addr: editById(r.editId).target, info: { kind: editById(r.editId).target.kind, label: editById(r.editId).targetLabel, href: editById(r.editId).targetHref }, replacing: r.editId }) : startAsk({ compId: c.id, addr: r.addr, info: r.info }); }
-      S.armed = S.armed === c.id ? null : c.id; S.ask = null; S.picking = null; renderEditorWs();
+      if (S.swapFor) { const w = S.swapFor; S.swapFor = null; return placeComp(c.id, w.editId ? { kind: 'swap', editId: w.editId } : { kind: 'swapblock', scope: w.blockId }); }
+      toast('Drag it onto your page');
     };
     rail.appendChild(el);
   });
   S.flash = null;
-  if ($('stGoComp')) $('stGoComp').onclick = () => goWs('component');
-  body.querySelectorAll('[data-chg]').forEach(b => b.onclick = () => {
-    const id = b.dataset.chg, k = b.dataset.k;
-    if (k === 'e') { S.ask = null; S.sel = { editId: id }; renderSideStudio(); stPost({ rkHi: { editId: id }, scroll: true }); }
-    else if (k === 'b') { B.sel = id; S.mode = 'blocks'; renderStudio(); }
-    else applyStyleDialog(compById(p.btnFrom) || { name: 'component', id: null });
-  });
+  if ($('stSwapX')) $('stSwapX').onclick = () => { S.swapFor = null; renderEditorWs(); };
+  $('stAdd').onsubmit = async e => {
+    e.preventDefault(); const v = $('stAddIn').value.trim(); if (!v) return;
+    const id = await importDropped([], v);
+    if (id) { $('stAddIn').value = ''; S.flash = id; renderEditorWs(); toast(`Added “${compById(id).name}” — drag it onto your page`, 3500); }
+  };
+  $('stAddFile').onclick = () => { const i = document.createElement('input'); i.type = 'file'; i.multiple = true; i.accept = '.html,.htm,.tsx,.jsx,image/*'; i.onchange = async () => { const id = await importDropped([...i.files], ''); if (id) { S.flash = id; renderEditorWs(); toast('Added — drag it onto your page'); } }; i.click(); };
   wireStToolbar();
-  if ($('stFocusX')) $('stFocusX').onclick = leaveFocus;
-  if ($('stInnerX')) $('stInnerX').onclick = () => { S.innerPick = null; stPost({ rkInner: null }); renderEditorWs(); };
-  if ($('stArmX')) $('stArmX').onclick = () => { S.armed = null; renderEditorWs(); };
-  if ($('stPickX')) $('stPickX').onclick = () => { S.picking = null; if (S.ask) S.ask.step = 'place'; renderEditorWs(); };
   renderStudioPreview();
-  renderSideStudio();
 }
+
+/* ---- placing: what you drop lands where the page showed it would, with sensible defaults; Undo is one click ---- */
+const snapshotPage = () => JSON.stringify({ edits: B.project.edits || [], blocks: B.project.blocks, btnCss: B.project.btnCss || '', btnFrom: B.project.btnFrom || null });
+function restorePage(snap) { const o = JSON.parse(snap); Object.assign(B.project, o); saveProject(); renderEditorWs(); }
+function toastUndo(msg, snap) {
+  let t = $('undoToast'); if (!t) { t = document.createElement('div'); t.id = 'undoToast'; t.className = 'undo-toast'; document.body.appendChild(t); }
+  t.innerHTML = `<span>${esc(msg)}</span><button type="button">Undo</button>`;
+  t.classList.add('show'); clearTimeout(toastUndo.t); toastUndo.t = setTimeout(() => t.classList.remove('show'), 6500);
+  t.querySelector('button').onclick = () => { t.classList.remove('show'); restorePage(snap); toast('Undone'); };
+}
+function placeComp(compId, it) {
+  const c = compById(compId); if (!c || !it) return;
+  const snap = snapshotPage(), edits = projectEdits(), recolor = !!(brandColor() && c.tokens && (c.tokens.accent || c.tokens.btnBg));
+  let msg = '';
+  if (it.kind === 'swap') {
+    const e = editById(it.editId); if (!e) return;
+    e.compId = c.id; delete e.inner; delete e.props; delete e.links; msg = `Swapped in “${c.name}”`;
+  } else if (it.kind === 'swapblock') {
+    const b = blockById(it.scope); if (!b) return;
+    b.compId = c.id; b.label = c.name; delete b.inner; delete b.props; msg = `Swapped in “${c.name}”`;
+  } else if (it.kind === 'replace') {
+    const href = it.info && it.info.href;
+    edits.push({ id: newEditId(), target: it.addr, targetLabel: (it.info && it.info.label) || '', targetHref: href || '', mode: 'replace', compId: c.id,
+      text: (it.info && it.info.label) || null, recolor, action: href && href !== '#' ? { type: 'keep', href } : null });
+    msg = `“${c.name}” replaced “${((it.info && it.info.label) || 'the button').slice(0, 30)}” — same words, same link`;
+  } else if (it.kind === 'here') {
+    edits.push({ id: newEditId(), target: it.addr, targetLabel: (it.info && it.info.label) || '', mode: 'after', compId: c.id, recolor, layout: { flow: true, size: 'auto' } });
+    msg = `Added “${c.name}”`;
+  } else if (it.kind === 'gap') {
+    edits.push({ id: newEditId(), target: { scope: it.scope, kind: 'section', idx: 0 }, targetLabel: blockLabel(it.scope), mode: 'after', compId: c.id, recolor, layout: { flow: true, size: 'auto' } });
+    msg = `Added “${c.name}” as a new section`;
+  } else return;
+  saveProject(); renderEditorWs(); toastUndo(msg, snap);
+  if (!c.tokens) ensureCompTokens(c);   // read its colours for next time (brand-colour matching)
+}
+// anything dropped from outside Reskin (a file, a link, some code) becomes a component first
+async function importDropped(files, text) {
+  try {
+    const items = [];
+    for (const f of files || []) {
+      if (/^image\//.test(f.type)) {
+        const src = await readDataUrl(f); if (!src) continue;
+        items.push({ name: titleCase(f.name.replace(/\.\w+$/, '')), source: 'picture', kind: 'html', code: `<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0}body{min-height:100vh;display:grid;place-items:center}img{max-width:100%;max-height:100vh;object-fit:contain;border-radius:12px}</style></head><body><img src="${src}" alt=""></body></html>` });
+      } else if (/\.(html?|tsx|jsx)$/i.test(f.name)) { const code = await f.text(); items.push({ name: titleCase(f.name.replace(/\.\w+$/, '')), source: 'file', kind: detectKind(code, f.name), code }); }
+    }
+    text = (text || '').trim();
+    if (!items.length && text && !/^reskin-component:/.test(text)) {
+      const first = text.split(/\s+/)[0];
+      if (/^https?:\/\//.test(first) || /^(www\.)?(uiverse\.io|21st\.dev|mui\.com|reactbits\.dev)\//.test(first)) { toast('Fetching the component…', 2500); items.push(...await importByLink(first)); }
+      else if (/[<{]|^\s*(import|export|const|function)\b/.test(text)) { const kind = detectKind(text); items.push({ name: titleCase(((/(?:function|const)\s+([A-Z]\w*)/.exec(text) || [])[1] || 'Pasted component').replace(/([a-z])([A-Z])/g, '$1 $2')), source: 'pasted', kind, code: text }); }
+    }
+    if (!items.length) { if (text || (files && files.length)) toast('That isn’t a component Reskin can use — try a link, code, an .html/.tsx file or a picture', 4500); return null; }
+    items.forEach(c => comps.list.unshift({ id: newId(), collection: 'My kit', created: Date.now(), ...c }));
+    comps.save();
+    return comps.list[0].id;
+  } catch (e) { toast(e.message || 'Couldn’t add that', 4500); return null; }
+}
+
 function stPost(msg) { const f = $('stFrame') && $('stFrame').querySelector('iframe'); if (f && f.contentWindow) f.contentWindow.postMessage(msg, '*'); }
 function renderStudioPreview() {
   const box = $('stFrame'); if (!box) return;
@@ -934,15 +1021,28 @@ addEventListener('message', e => {
   if (state.view !== 'studio' || S.mode === 'blocks' || !$('stFrame')) return;
   const f = $('stFrame').querySelector('iframe'); if (!f || e.source !== f.contentWindow) return;
   if (d.rkDrop) {
-    const compId = S.drag; S.drag = null;
-    if (!compId) return;
-    if (d.rkDrop.editId) { const ed = editById(d.rkDrop.editId); if (ed) { S.sel = { editId: ed.id }; startAsk({ compId, addr: ed.target, info: { kind: ed.target.kind, label: ed.targetLabel, href: ed.targetHref }, replacing: ed.id }); } return; }
-    startAsk({ compId, addr: d.rkDrop.addr, info: d.rkDrop.info });
+    const it = d.rkDrop; let compId = S.drag; S.drag = null;
+    (async () => { if (!compId) compId = await importDropped(d.files, d.text); if (compId) placeComp(compId, it); })();
+    return;
+  }
+  if (d.rkTool) {
+    const t = d.rkTool, snap = snapshotPage();
+    if (t.action === 'remove') {
+      if (t.editId) { const e = editById(t.editId); B.project.edits = projectEdits().filter(x => x.id !== t.editId); saveProject(); renderEditorWs(); toastUndo(`Removed “${(compById(e && e.compId) || {}).name || 'it'}”`, snap); }
+      else if (t.blockId) { removeBlock(t.blockId); toastUndo('Removed it', snap); }
+    }
+    if (t.action === 'swap') { S.swapFor = { editId: t.editId, blockId: t.blockId }; renderEditorWs(); toast('Pick the component to swap in — or drag one onto it'); }
+    if (t.action === 'size' && t.editId) {
+      const e = editById(t.editId), order = ['auto', 's', 'wide', 'big', 'band', 'full'];
+      const L = e.layout || (e.layout = { flow: true, size: 'auto' }), next = order[(order.indexOf(L.size) + 1) % order.length];
+      L.size = next; L.flow = true; saveProject(); renderStudioPreview(); toast('Size: ' + sizeName(next));
+    }
+    return;
   }
   if (d.rkText) { saveTextEdit(d.rkText.addr, d.rkText.text, d.rkText.was); return; }
   if (d.rkCtx) {
     const fr = $('stFrame').querySelector('iframe').getBoundingClientRect();
-    openCtx(fr.left + d.x, fr.top + d.y, ctxItems(d.rkCtx, d.hidden));
+    const items = ctxItems(d.rkCtx); if (items.length) openCtx(fr.left + d.x, fr.top + d.y, items);
     return;
   }
   if (d.rkPartsOf) {
@@ -1235,64 +1335,29 @@ function saveTextEdit(addr, text, was) {
   const edits = projectEdits(), ex = edits.find(e => e.mode === 'text' && sameAddr(e.target, addr));
   if (ex) ex.text = text; else edits.push({ id: newEditId(), target: addr, targetLabel: was || '', mode: 'text', text });
   saveProject(); toast(`Text changed to “${text.slice(0, 40)}”`);
-  S.sel = { addr, info: { kind: addr.kind, label: text } };
-  renderEditorWs();
 }
-function ctxItems(t, hidden) {
-  const items = [], edits = projectEdits();
-  if (t.addr && t.addr.kind === 'node') return [{ label: 'Edit this part…', icon: '✎', run: () => { S.sel = t; renderSideStudio(); } }, { label: 'Edit text', icon: '✎', hint: 'or double-click', run: () => stPost({ rkEditText: t.addr }) }, '-', { label: 'Back to the page', icon: '←', run: leaveFocus }];
-  const configure = () => {
-    S.ask = null; S.reveal = true;
-    if (t.editId) {
-      const e = editById(t.editId);
-      S.sel = { editId: t.editId }; S.propsFor = e && hasProps(compById(e.compId)) ? { editId: e.id } : null;
-      renderSideStudio(); stPost({ rkHi: { editId: t.editId } });
-      return;
-    }
-    const b = t.addr.kind === 'section' && blockById(t.addr.scope);
-    if (b && b.kind === 'comp' && hasProps(compById(b.compId))) { S.sel = t; S.propsFor = { blockId: b.id }; renderSideStudio(); stPost({ rkHi: { addr: t.addr } }); return; }
-    S.propsFor = null;
-    stPost({ rkDetailAddr: t.addr });   // the page answers with the part and its current look → the detail editor
-  };
+function ctxItems(t) {
+  const edits = projectEdits(), items = [];
   if (t.editId) {
-    const e = editById(t.editId); if (!e) return [{ label: 'Configure…', icon: '⚙', run: configure }];
-    const c = e.compId && compById(e.compId);
-    items.push({ label: 'Configure…', icon: '⚙', hint: 'size, words, clicks', run: configure });
-    if (c && isClicky(e.target.kind)) items.push({ label: 'Edit text', icon: '✎', run: () => { const v = prompt('What should it say?', e.text || e.targetLabel || ''); if (v != null && v.trim()) { e.text = v.trim(); saveProject(); renderEditorWs(); } } });
-    if (isClicky(e.target.kind) || e.mode === 'action') items.push({ label: 'When clicked…', icon: '👆', hint: 'node view', run: () => openLinksFor(e.target, e.text || e.targetLabel) });
-    if (c && !isClicky(e.target.kind)) {
-      items.push({ label: 'Link a part of it…', icon: '🔗', run: () => { S.mode = 'links'; renderStudio(); } });
-      items.push({ label: 'Pick a part to link…', icon: '✛', run: () => { S.innerPick = e.id; renderEditorWs(); } });
-    }
-    if (c && !isClicky(e.target.kind)) items.unshift({ label: 'Edit in detail…', icon: '✎', hint: 'every part', run: () => focusOn({ editId: e.id }) });
-    if (hasProps(c)) items.unshift({ label: 'Settings…', icon: '⚙', hint: 'picture, colours…', run: () => { S.ask = null; S.propsFor = { editId: e.id }; renderSideStudio(); } });
-    if (c) items.push({ label: 'Swap for another component…', icon: '⇄', run: () => { S.replaceAt = { editId: e.id }; toast('Now click a component on the left'); } });
-    items.push('-', { label: 'Undo this change', icon: '↺', danger: true, run: () => { B.project.edits = edits.filter(x => x.id !== e.id); S.sel = null; saveProject(); toast('Change undone'); renderStudio(); } });
+    const e = editById(t.editId), c = e && compById(e.compId), snap = snapshotPage();
+    if (c && isClicky(e.target.kind)) items.push({ label: 'Change its words', icon: '✎', run: () => { const v = prompt('What should it say?', e.text || e.targetLabel || ''); if (v != null && v.trim()) { e.text = v.trim(); saveProject(); renderStudioPreview(); } } });
+    if (c) items.push({ label: 'Swap for another component', icon: '⇄', run: () => { S.swapFor = { editId: e.id }; renderEditorWs(); } });
+    items.push({ label: 'Remove', icon: '✕', danger: true, run: () => { B.project.edits = edits.filter(x => x.id !== t.editId); saveProject(); renderEditorWs(); toastUndo('Removed', snap); } });
     return items;
   }
-  const a = t.addr, k = a.kind, here = edits.filter(e => sameAddr(e.target, a) && (e.mode === 'text' || e.mode === 'hide' || e.mode === 'action'));
-  if (k === 'section') {
-    const b = B.project.blocks.find(x => x.id === a.scope);
-    if (b && hasProps(compById(b.compId))) items.push({ label: 'Settings…', icon: '⚙', hint: 'picture, colours…', run: () => { S.ask = null; S.propsFor = { blockId: b.id }; renderSideStudio(); } });
-    if (a.scope !== 'nav' && a.scope !== 'footer') items.push({ label: 'Edit in detail…', icon: '✎', hint: 'every part', run: () => focusOn(t) });
-    items.push({ label: 'Configure…', icon: '⚙', run: configure });
-    items.push({ label: 'Replace with a component…', icon: '⇄', run: () => { S.replaceAt = { addr: a, info: t.info }; toast('Now click a component on the left'); } });
-    items.push({ label: 'Move or schedule it…', icon: '↕', hint: 'Blocks', run: () => { B.sel = a.scope; S.mode = 'blocks'; renderStudio(); } });
-    if (b) items.push('-', { label: b.hidden ? 'Show this section' : 'Hide this section', icon: b.hidden ? '◉' : '◌', run: () => { b.hidden = !b.hidden; saveProject(); renderStudio(); } });
-    if (b && b.kind === 'comp') items.push({ label: 'Remove this component', icon: '✕', danger: true, run: () => removeBlock(b.id) });
-    return items;
+  const a = t.addr, snap = snapshotPage();
+  if (a.kind === 'section') {
+    const b = blockById(a.scope);
+    if (b && b.kind === 'comp') return [{ label: 'Swap for another component', icon: '⇄', run: () => { S.swapFor = { blockId: b.id }; renderEditorWs(); } }, { label: 'Remove', icon: '✕', danger: true, run: () => { removeBlock(b.id); toastUndo('Removed', snap); } }];
+    if (b) return [{ label: b.hidden ? 'Show this section' : 'Hide this section', icon: b.hidden ? '◉' : '◌', run: () => { b.hidden = !b.hidden; saveProject(); renderEditorWs(); toastUndo(b.hidden ? 'Section hidden' : 'Section shown', snap); } }];
+    return [];
   }
-  if ({ heading: 1, text: 1, button: 1, link: 1 }[k]) items.push({ label: 'Edit text', icon: '✎', hint: 'or double-click', run: () => stPost({ rkEditText: a }) });
-  items.push({ label: 'Configure…', icon: '⚙', run: configure });
-  if (isClicky(k)) {
-    items.push({ label: 'When clicked…', icon: '👆', hint: 'node view', run: () => openLinksFor(a, t.info && t.info.label) });
-  }
-  items.push({ label: 'Replace with a component…', icon: '⇄', run: () => { S.replaceAt = { addr: a, info: t.info }; toast('Now click a component on the left'); } });
-  items.push('-');
+  if ({ heading: 1, text: 1, button: 1, link: 1 }[a.kind]) items.push({ label: 'Edit the words', icon: '✎', hint: 'or double-click', run: () => stPost({ rkEditText: a }) });
   const hid = edits.find(e => e.mode === 'hide' && sameAddr(e.target, a));
-  items.push(hid ? { label: 'Show it again', icon: '◉', run: () => { B.project.edits = edits.filter(x => x !== hid); saveProject(); renderEditorWs(); } }
-    : { label: 'Hide', icon: '◌', run: () => { edits.push({ id: newEditId(), target: a, targetLabel: t.info && t.info.label || '', mode: 'hide' }); saveProject(); toast('Hidden — right-click it to show it again'); renderEditorWs(); } });
-  if (here.length) items.push({ label: 'Undo my changes here', icon: '↺', danger: true, run: () => { B.project.edits = edits.filter(x => !here.includes(x)); saveProject(); toast('Undone'); renderStudio(); } });
+  items.push(hid ? { label: 'Show it again', icon: '◉', run: () => { B.project.edits = edits.filter(x => x !== hid); saveProject(); renderStudioPreview(); } }
+    : { label: 'Hide it', icon: '◌', run: () => { edits.push({ id: newEditId(), target: a, targetLabel: t.info && t.info.label || '', mode: 'hide' }); saveProject(); renderStudioPreview(); toastUndo('Hidden', snap); } });
+  const mine = edits.filter(e => sameAddr(e.target, a) && (e.mode === 'text' || e.mode === 'hide'));
+  if (mine.length) items.push({ label: 'Back to how it was', icon: '↺', run: () => { B.project.edits = edits.filter(x => !mine.includes(x)); saveProject(); renderStudioPreview(); } });
   return items;
 }
 
