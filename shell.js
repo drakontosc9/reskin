@@ -447,7 +447,19 @@ function parseProps(c) {
 function mountFor(c, extra) {
   const P = parseProps(c); if (!P || !P.fields.length) return null;
   const props = { ...P.seed, ...(c.props || {}), ...(extra || {}) };
+  // a prop with no value and no default would leave it blank: fill it by kind, never by component
+  P.fields.forEach(f => {
+    if (f.name in props || f.def !== undefined) return;
+    if (f.type === 'image') props[f.name] = placeholderImage();
+    else if (f.type === 'text') props[f.name] = f.label;
+  });
   return Object.keys(props).length ? { name: P.main, props } : null;
+}
+// a picture from the user's own site if there is one, else a soft neutral placeholder
+function placeholderImage() {
+  const im = state.model && state.model.images && state.model.images.find(i => i && i.src);
+  if (im) try { return resolveSrc(im.src); } catch {}
+  return 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#e9e4dc"/><stop offset="1" stop-color="#cfc7bb"/></linearGradient></defs><rect width="800" height="600" fill="url(#g)"/><path d="M250 400l110-130 80 90 60-60 110 100z" fill="#b5ab9d"/><circle cx="520" cy="220" r="40" fill="#b5ab9d"/></svg>');
 }
 // owner: null → the component's own settings (Library); otherwise a placement (a tile edit or an added block)
 function renderPropsPanel(box, c, owner, onChange) {

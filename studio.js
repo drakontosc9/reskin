@@ -51,19 +51,32 @@ function __rkElem(D) {
   function box() {
     if (!document.body) return null;
     var vw = innerWidth, vh = innerHeight, x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9, all = document.body.getElementsByTagName('*');
+    BG = opaque(document.body) || opaque(document.documentElement); var stage = [document.documentElement, document.body];
     for (var i = 0; i < all.length && i < 3000; i++) {
       var el = all[i]; if (/^(SCRIPT|STYLE|LINK|META|TEMPLATE|NOSCRIPT|BR)$/.test(el.tagName)) continue;
       var r = el.getBoundingClientRect(); if (r.width < 1 || r.height < 1) continue;
-      if (r.width >= vw * 0.97 && r.height >= vh * 0.9) continue;
+      if (r.width >= vw * 0.97 && r.height >= vh * 0.9) { BG = opaque(el) || BG; stage.push(el); continue; }   // a full-screen wrapper: its colour is the backdrop
       x0 = Math.min(x0, r.left); y0 = Math.min(y0, r.top); x1 = Math.max(x1, r.right); y1 = Math.max(y1, r.bottom);
     }
     if (x1 <= x0) return null;
+    // the content brings its own surface (a white card on a grey demo page): the backdrop was only staging
+    if (BG) for (var j = 0; j < all.length && j < 3000; j++) {
+      var q = all[j].getBoundingClientRect();
+      if (Math.abs(q.left - x0) < 3 && Math.abs(q.top - y0) < 3 && Math.abs(q.right - x1) < 3 && Math.abs(q.bottom - y1) < 3) { if (opaque(all[j])) { BG = null; stage.forEach(function (x) { x.style.setProperty('background', 'transparent', 'important'); }); } break; }
+    }
     return { x: Math.floor(x0 + scrollX), y: Math.floor(y0 + scrollY), w: Math.ceil(x1 - x0), h: Math.ceil(y1 - y0), full: (x1 - x0) >= vw * 0.85 && (y1 - y0) >= vh * 0.6 };
+  }
+  // the colour the component sits on, if it brings its own (a dark card UI on a black page); null = see-through
+  var BG = null;
+  function opaque(el) {
+    if (!el) return null; var c = getComputedStyle(el), m = /rgba?\(([^)]+)\)/.exec(c.backgroundColor);
+    if (c.backgroundImage && c.backgroundImage !== 'none') return c.backgroundImage.indexOf('gradient') >= 0 ? c.backgroundImage : null;
+    if (!m) return null; var a = m[1].split(','); return a.length < 4 || +a[3] > 0.5 ? c.backgroundColor : null;
   }
   var last = '';
   function report() {
     var b = box(), de = document.documentElement;
-    var msg = { rkE: D.id, box: b, sw: de.scrollWidth, sh: de.scrollHeight, vw: innerWidth, vh: innerHeight };
+    var msg = { rkE: D.id, box: b, bg: BG, err: window.__reskinErr || null, sw: de.scrollWidth, sh: de.scrollHeight, vw: innerWidth, vh: innerHeight };
     var k = JSON.stringify(msg); if (k !== last) { last = k; parent.postMessage(msg, '*'); }
   }
   // ---- parts of the component that are linked to the site (a folder, a file, a menu item…)
@@ -233,7 +246,7 @@ function __rkStudio(EDITS, MODE) {
   // scroll this page only (scrollIntoView would also scroll the editor page around the preview)
   function goTo(el, where) { var r = el.getBoundingClientRect(); scrollTo({ top: Math.max(0, r.top + scrollY - (where === 'center' ? (innerHeight - r.height) / 2 : 0)), behavior: 'smooth' }); }
   var F = window.__rkFrames = {};   // frame state (handy when debugging a layout)
-  var PAD = 14, CROP_W = 900, CROP_H = 360;
+  var PAD = 14, CROP_W = 900, CROP_H = 360, CROP_MAXW = 560, CROP_MAXH = 240, WAIT = 9000;
   function fit(k) {
     var tw = k.tile.clientWidth, th = k.tile.clientHeight; if (!tw || !th) return;
     k.vw = Math.round(tw / k.s); k.vh = Math.round(th / k.s);
@@ -252,12 +265,38 @@ function __rkStudio(EDITS, MODE) {
     if (ar <= 0.7) return 'tall';
     return b.w < colW * 1.1 && b.h < 170 ? 's' : 'big';
   }
+  // nothing showed (needs a prop, crashed, offline): say so in the editor; on the real site, step aside
+  function empty(k, why) {
+    if (k.seen || k.emptyShown) return; k.emptyShown = true;
+    if (k.mode === 'crop') { k.wrap.style.display = 'none'; if (k.orig) k.orig.style.display = ''; if (MODE !== 'edit') return; }
+    var host = k.mode === 'crop' ? k.orig : k.tile; if (!host) return;
+    if (MODE !== 'edit') { k.tile.style.display = 'none'; return; }
+    var n = document.createElement('div'); n.className = 'rk-empty';
+    n.textContent = why ? 'This component stopped working here. It probably needs data Reskin can’t guess (a list, some settings). Set it in Library, or swap it.' : 'Nothing showed up. This component may need a picture or some text. Set it in Library, or swap it.';
+    if (why) n.title = String(why).slice(0, 200);
+    if (k.mode === 'crop') { n.style.cssText = 'position:absolute;z-index:5;max-width:260px'; host.parentNode.insertBefore(n, host.nextSibling); } else host.appendChild(n);
+  }
+  function settle(k, d) {   // the backdrop it brings, and its content centred in the tile
+    k.tile.style.background = d.bg || 'transparent';
+    var ox = 0, oy = 0;
+    if (d.box && !d.box.full) {
+      var tw = k.tile.clientWidth, th = k.tile.clientHeight, s = k.s;
+      if (d.box.w * s < tw) ox = Math.round((tw - d.box.w * s) / 2 - d.box.x * s);
+      if (d.box.h * s < th) oy = Math.round((th - d.box.h * s) / 2 - d.box.y * s);
+    }
+    k.f.style.left = ox + 'px'; k.f.style.top = oy + 'px';
+  }
   function onReport(d) {
     var k = F[d.rkE]; if (!k) return;
+    if (d.err && !d.box) return empty(k, d.err);
+    if (d.box) { k.seen = true; var em = k.tile && k.tile.querySelector('.rk-empty'); if (em) em.remove(); }
     if (k.mode === 'crop') {
       if (!d.box) return;
-      k.wrap.style.width = (d.box.w + 2 * PAD) + 'px'; k.wrap.style.height = (d.box.h + 2 * PAD) + 'px';
-      k.f.style.left = -(d.box.x - PAD) + 'px'; k.f.style.top = -(d.box.y - PAD) + 'px';
+      // a big component dropped on a button is shown smaller, so it can't push the page around
+      var s = Math.min(1, CROP_MAXW / d.box.w, CROP_MAXH / d.box.h);
+      k.wrap.style.width = Math.round(d.box.w * s + 2 * PAD) + 'px'; k.wrap.style.height = Math.round(d.box.h * s + 2 * PAD) + 'px';
+      k.f.style.transform = s < 1 ? 'scale(' + s + ')' : '';
+      k.f.style.left = Math.round(PAD - d.box.x * s) + 'px'; k.f.style.top = Math.round(PAD - d.box.y * s) + 'px';
       k.wrap.style.visibility = 'visible'; return;
     }
     if (!k.vw || Math.abs(d.vw - k.vw) > 3 || Math.abs(d.vh - k.vh) > 3) return;   // a report from before the last resize
@@ -285,8 +324,9 @@ function __rkStudio(EDITS, MODE) {
       if (need < cur) { k.tile.className = k.tile.className.replace(/\brk-r\d\b/, 'rk-r' + need); fit(k); return; }
     }
     if (k.adj <= 1 && k.s < 1 && d.box && !d.box.full && bw < k.vw * 0.7 && bh < k.vh * 0.7) {
-      k.adj++; k.s = Math.min(1, k.s * Math.min(k.vw / bw, k.vh / bh) * 0.92); fit(k);
+      k.adj++; k.s = Math.min(1, k.s * Math.min(k.vw / bw, k.vh / bh) * 0.92); fit(k); return;
     }
+    settle(k, d);
   }
   function cropFrame(e, el) {
     var w = document.createElement('span');
@@ -294,12 +334,14 @@ function __rkStudio(EDITS, MODE) {
     var r = el.getBoundingClientRect();
     w.style.cssText = 'display:inline-block;position:relative;overflow:hidden;vertical-align:middle;margin:-' + PAD + 'px;visibility:hidden;width:' + Math.round(r.width + 2 * PAD) + 'px;height:' + Math.round(r.height + 2 * PAD) + 'px';
     var f = frame(e.id, e.doc, 'component'); f.style.width = CROP_W + 'px'; f.style.height = CROP_H + 'px';
-    w.appendChild(f); F[e.id] = { mode: 'crop', f: f, wrap: w };
+    w.appendChild(f); var k = F[e.id] = { mode: 'crop', f: f, wrap: w, orig: el };
+    setTimeout(function () { empty(k); }, WAIT);
     return w;
   }
-  function tileFrame(id, doc, tile, auto) {
+  function tileFrame(id, doc, tile, auto, row) {
     var f = frame(id, doc, 'component'); tile.appendChild(f);
-    var k = F[id] = { mode: 'fit', f: f, tile: tile, s: 1, adj: 0, auto: auto, stage: 0 };
+    var k = F[id] = { mode: 'fit', f: f, tile: tile, s: 1, adj: 0, auto: auto, stage: row ? 1 : 0 };
+    setTimeout(function () { empty(k); }, WAIT);
     if (window.ResizeObserver) new ResizeObserver(function () { fit(k); }).observe(tile);
     setTimeout(function () { fit(k); }, 0);
     return k;
@@ -349,7 +391,7 @@ function __rkStudio(EDITS, MODE) {
       var tile = document.createElement('div');
       tile.className = 'rk-e rk-tile'; tile.setAttribute('data-rk-edit', e.id);
       if (L.flow) {
-        setSize(tile, L.size === 'auto' ? 'big' : L.size);
+        setSize(tile, L.size === 'auto' ? (L.row ? 'full' : 'big') : L.size);
         var spot = bentoSpot(el, e);
         spot.box.insertBefore(tile, spot.before && spot.before.parentNode === spot.box ? spot.before : null);
       } else {
@@ -359,7 +401,7 @@ function __rkStudio(EDITS, MODE) {
         el.parentNode.insertBefore(tile, e.mode === 'replace' ? el : el.nextSibling);
       }
       if (e.mode === 'replace') el.style.display = 'none';
-      tileFrame(e.id, e.doc, tile, L.flow && L.size === 'auto');
+      tileFrame(e.id, e.doc, tile, L.flow && L.size === 'auto', L.flow && L.size === 'auto' && L.row);
     } else if (e.action) el.setAttribute('data-rk-edit', e.id);
   });
 
@@ -401,6 +443,7 @@ function __rkStudio(EDITS, MODE) {
     '.rk-bento{display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr))!important;grid-auto-rows:minmax(150px,auto)!important;grid-auto-flow:row dense!important;gap:20px!important;align-items:stretch!important}' +
     '.rk-bento>*{min-width:0!important;margin:0!important;grid-column:span 1}.rk-bento-row>.rk-bento{margin:28px 0}' +
     '.rk-tile{position:relative;overflow:hidden;border-radius:var(--r,14px);min-height:150px}' +
+    '.rk-empty{position:absolute;inset:10px;display:grid;place-items:center;text-align:center;padding:14px;border:2px dashed #c9c2b8;border-radius:12px;background:rgba(250,248,245,.94);color:#57524b;font:500 13px/1.45 Inter,system-ui,sans-serif}' +
     '.rk-bento>.rk-c1{grid-column:span 1}.rk-bento>.rk-c2{grid-column:span 2}.rk-bento>.rk-c4{grid-column:1/-1}' +
     '.rk-bento>.rk-r1{grid-row:span 1}.rk-bento>.rk-r2{grid-row:span 2}.rk-bento>.rk-r3{grid-row:span 3}.rk-bento>.rk-r4{grid-row:span 4}' +
     '@media (max-width:900px){.rk-bento{grid-template-columns:repeat(2,minmax(0,1fr))!important}}' +
@@ -828,7 +871,7 @@ function placeComp(compId, it) {
     msg = `Added “${c.name}”`;
   } else if (it.kind === 'gap') {
     edits.push({ id: newEditId(), target: { scope: it.scope, kind: 'section', idx: 0 }, targetLabel: blockLabel(it.scope), mode: 'after', compId: c.id, recolor, layout: { flow: true, size: 'auto' } });
-    msg = `Added “${c.name}” as a new section`;
+    edits[edits.length - 1].layout.row = true; msg = `Added “${c.name}” as a new section`;
   } else return;
   saveProject(); renderEditorWs(); toastUndo(msg, snap);
   if (!c.tokens) ensureCompTokens(c);   // read its colours for next time (brand-colour matching)
