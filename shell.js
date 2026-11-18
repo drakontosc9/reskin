@@ -272,9 +272,16 @@ function wearStyle(s) {
   const set = (k, v) => { if (v != null && v !== '') r.setProperty(k, String(v)); else r.removeProperty(k); };
   // colours
   const bg = col(p.bodyBg) || col(p.bg), panel = col(p.card) || col(p.surface) || bg;
-  set('--bg', bg); set('--panel', panel); set('--ink', col(p.text)); set('--muted', col(p.muted) || (p.text && `color-mix(in srgb, ${p.text} 62%, ${bg})`));
+  // Reskin's panels sit on the page colour and its text sits on both: a style's text colour can suit its page but not
+  // its cards (light text on a dark site with light cards). Keep whichever ink reads on both.
+  const lumOf = c => { try { const v = cssToRgb(c).slice(0, 3).map(x => { x /= 255; return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); }); return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]; } catch { return null; } };
+  const cr = (a, b) => { const x = lumOf(a), y = lumOf(b); return x == null || y == null ? 21 : (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+  const readable = (want, on) => { const opts = [want, '#151413', '#ffffff'].filter(Boolean); return opts.find(o => on.every(b => !b || cr(o, b) >= 4.5)) || opts.sort((a, b) => Math.min(...on.map(x => cr(b, x))) - Math.min(...on.map(x => cr(a, x))))[0]; };
+  const ink = col(p.text) ? readable(col(p.text), [panel, bg]) : null;
+  const accInk = col(p.accent) ? readable(col(p.accentText) || Cx.css(Cx.on(cssToRgb(p.accent))), [col(p.accent)]) : null;
+  set('--bg', bg); set('--panel', panel); set('--ink', ink); set('--muted', ink !== col(p.text) ? `color-mix(in srgb, ${ink} 62%, ${panel})` : col(p.muted) || (p.text && `color-mix(in srgb, ${p.text} 62%, ${bg})`));
   set('--line', col(p.border) || (p.text && `color-mix(in srgb, ${p.text} 14%, ${bg})`));
-  set('--accent', col(p.accent)); set('--accent-ink', col(p.accentText) || (p.accent && Cx.css(Cx.on(cssToRgb(p.accent))))); set('--chip', col(p.surface));
+  set('--accent', col(p.accent)); set('--accent-ink', accInk); set('--chip', col(p.surface));
   set('--accent-soft', `color-mix(in srgb, ${col(p.accent)} 10%, ${panel})`);
   // buttons take the input's shape
   const tb = T && T.btn;

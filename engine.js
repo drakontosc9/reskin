@@ -71,8 +71,34 @@ const isBtn = a => /btn|button|cta/i.test(typeof a.className === 'string' ? a.cl
 
 function extract(html) {
   const doc = new DOMParser().parseFromString(html, 'text/html');
+  // forms first, while their fields are still here: a <form>, or (apps often skip the tag) any group of 2+ fields with a button.
+  // Each field is named by its label, so "Project idea · Target users · Difficulty" survives the restyle.
+  const FIELD = 'input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=checkbox]):not([type=radio]),textarea,select';
+  const fieldName = f => {
+    const id = f.getAttribute('id'), byFor = id && doc.querySelector(`label[for="${CSS.escape(id)}"]`), wrap = f.closest('label');
+    let prev = f.previousElementSibling; while (prev && !clean(prev.textContent)) prev = prev.previousElementSibling;
+    const lab = byFor || wrap || (prev && /^(LABEL|SPAN|P|DIV|STRONG|B)$/.test(prev.tagName) && clean(prev.textContent).length <= 40 ? prev : null) || (f.parentElement && f.parentElement.querySelector('label'));
+    const t = (lab ? clean(lab.textContent.replace(f.tagName === 'SELECT' ? f.textContent : '', '')) : '') || f.getAttribute('placeholder') || f.getAttribute('aria-label') || f.name || 'Your answer';
+    return t.slice(0, 40);
+  };
+  const markForm = (box, fields) => {
+    box.setAttribute('data-rk-form', JSON.stringify(fields.map(fieldName).slice(0, 6)));
+    fields.forEach(f => { const l = f.id && doc.querySelector(`label[for="${CSS.escape(f.id)}"]`); if (l) l.setAttribute('data-rk-label', ''); const w = f.closest('label'); if (w) w.setAttribute('data-rk-label', ''); });
+  };
+  if (doc.body) {
+    // pop-ups, dialogs and drawers (newsletter modals, cart drawers, search overlays) aren't the page's content
+    const aside = el => el.closest('dialog,[role="dialog"],[aria-modal="true"],[class*="modal"],[class*="popup"],[class*="drawer"],[class*="overlay"],[class*="search"],[class*="cart"]');
+    doc.querySelectorAll('form').forEach(fm => { if (aside(fm)) { fm.setAttribute('data-rk-skip', ''); return; } const fs = [...fm.querySelectorAll(FIELD)]; markForm(fm, fs); });
+    const loose = [...doc.body.querySelectorAll(FIELD)].filter(f => !f.closest('form') && !aside(f));
+    if (loose.length >= 2) {
+      let box = loose[0].parentElement; while (box && box !== doc.body && !loose.every(f => box.contains(f))) box = box.parentElement;
+      if (box && box !== doc.body) { while (!box.querySelector('button,[type=submit]') && box.parentElement && box.parentElement !== doc.body) box = box.parentElement; markForm(box, loose.filter(f => box.contains(f))); }
+    }
+  }
   doc.querySelectorAll('script,style,noscript,template,iframe,svg,canvas,link,meta,select,video,audio,pre,textarea').forEach(e => e.remove());
   const m = { title: clean(doc.title), brand: '', logo: null, images: [], nav: [], navCta: null, footer: '', footerLinks: [], hero: null, sections: [] };
+  // a page isn't rendered here, so separate boxes' words would run together ("Original BlackSmooth…"): space them
+  if (doc.body) doc.body.querySelectorAll('*').forEach(e => { if (e.tagName === 'BR') e.replaceWith(' '); else if (!INLINE.has(e.tagName) && e.firstChild) e.append(' '); });
 
   // every image on the page (for the Advanced tab), before anything is removed
   const seen = new Set();
@@ -80,13 +106,28 @@ function extract(html) {
   doc.querySelectorAll('img[src]').forEach(i => addImg(i.getAttribute('src'), i.alt));
   doc.querySelectorAll('[style*="url("]').forEach(e => { const u = /url\(\s*['"]?([^'")]+)/.exec(e.getAttribute('style')); if (u && !/^#/.test(u[1])) addImg(u[1], ''); });
 
-  const logo = doc.querySelector('.logo,.brand,.site-title,[class*="logo"],[class*="brand"],nav strong,header strong');
+  const LOGO_SEL = '.logo,.brand,.site-title,[class*="logo"],[class*="brand"],nav strong,header strong';
+  const ownLogo = el => !/logos\b|partner|client|sponsor|press|featured/i.test(typeof el.className === 'string' ? el.className : '') && el.querySelectorAll('img').length <= 1 && !el.closest('[class*="logos"],[class*="partner"],[class*="client"],[class*="marquee"],footer');
+  const logo = [...doc.querySelectorAll(`header :is(${LOGO_SEL}),nav :is(${LOGO_SEL}),:is(${LOGO_SEL})[href="/"],a[href="/"] :is(${LOGO_SEL})`)].find(ownLogo) || [...doc.querySelectorAll(LOGO_SEL)].find(ownLogo) || null;
   m.brand = logo ? clean(logo.textContent) : '';
   const logoImg = logo && (logo.tagName === 'IMG' ? logo : logo.querySelector('img'));
   if (logoImg && logoImg.getAttribute('src')) m.logo = { src: logoImg.getAttribute('src'), alt: logoImg.alt || '' };
   if (!m.brand && logoImg) m.brand = logoImg.alt;
+  // the link back to the home page usually *is* the brand: its words, its picture's alt, or its label
+  const firstHead = doc.querySelector('h1,h2');
+  const home = [...doc.querySelectorAll('a[href="/"],a[href="./"],a[href="#"][class*="logo"],a[href="index.html"]')].find(a => !a.closest('footer') && (!firstHead || a.compareDocumentPosition(firstHead) & Node.DOCUMENT_POSITION_FOLLOWING));
+  if (home) {
+    const im = home.querySelector('img'), hn = clean(home.textContent) || (im && clean(im.alt)) || clean(home.getAttribute('aria-label') || home.getAttribute('title') || '');
+    const name = hn.replace(/\s*(home( ?page)?|go to home(page)?)\s*$/i, '').replace(/^(home|go to)\s+/i, '').trim();
+    if (name.length >= 2 && name.length <= 40 && !/^home$/i.test(name)) m.brand = name;
+  }
   if (m.brand.length > 40) m.brand = '';
-  if (!m.brand) m.brand = clean((m.title || '').split(/[|–—·:-]/)[0]);
+  const declared = doc.querySelector('meta[property="og:site_name"],meta[name="application-name"],meta[name="apple-mobile-web-app-title"]');
+  if (declared && clean(declared.getAttribute('content')).length >= 2 && clean(declared.getAttribute('content')).length <= 40 && (!m.brand || !home)) m.brand = clean(declared.getAttribute('content'));
+  if (!m.brand) {   // "Raw Local Honey in Rochester | Nettie's Bees": the short part is the name
+    const parts = (m.title || '').split(/\s*[|–—·]\s*|:\s+|\s+-\s+/).map(clean).filter(Boolean);
+    m.brand = parts.length > 1 ? parts.reduce((a, b) => b.length < a.length ? b : a) : (parts[0] || '');
+  }
 
   const footer = doc.querySelector('footer');
   if (footer) {
@@ -96,19 +137,59 @@ function extract(html) {
     footer.remove();
   }
 
-  // nav: <nav>, else <header>, else a sidebar <aside> full of links
-  let navEl = doc.querySelector('nav') || doc.querySelector('header');
-  if (!navEl) navEl = [...doc.querySelectorAll('aside')].find(a => a.querySelectorAll('a,button').length >= 3);
-  if (navEl) {
-    navEl.querySelectorAll('a,button').forEach(a => {
-      const t = clean(a.textContent); if (!t || t === m.brand || t.length > 30) return;
-      const item = { text: t, href: a.getAttribute('href') || '#' };
-      if (isBtn(a) && a.tagName === 'A' && !m.navCta) m.navCta = item; else if (m.nav.length < 6 && !m.nav.some(n => n.text === t)) m.nav.push(item);
+  // nav: the menu with the most real page links — a <nav>, a header, a menu overlay, a sidebar, or just a cluster
+  // of short links at the top of the page (sites built without a <nav>)
+  const UTIL = /^((search|cart|bag|basket|wishlist|account|log ?in|sign ?in|menu|close|open menu|toggle|skip to( content)?|navigation menu|your shopping bag|privacy policy)\b.*|[\d\s()]+)$/i;
+  const linkText = a => {   // what the link says: without hover duplicates (aria-hidden copies), else its label
+    const c = a.cloneNode(true); c.querySelectorAll('[aria-hidden="true"]').forEach(x => x.remove());
+    // two labels side by side with no words of their own ("Let's talk" + "Say hi" on hover): the first is the link
+    let box = c, own, parts;
+    for (let d = 0; d < 4; d++) {
+      own = [...box.childNodes].some(n => n.nodeType === 3 && n.nodeValue.trim()); parts = [...box.children].filter(x => clean(x.textContent));
+      if (own || parts.length !== 1) break; box = parts[0];
+    }
+    let t = (!own && parts.length >= 2 && parts.every(x => !x.querySelector('a'))) ? clean(parts[0].textContent) : clean(c.textContent);
+    t = t || clean(a.getAttribute('aria-label') || a.getAttribute('title') || '');
+    const w = t.split(' '), h = w.length / 2;   // "Search Search", "Shop Shop": the same words twice (rolling-text effects)
+    if (w.length > 1 && w.length % 2 === 0 && w.slice(0, h).join(' ') === w.slice(h).join(' ')) t = w.slice(0, h).join(' ');
+    return t;
+  };
+  const navLinks = el => {
+    const seen = new Set(), out = [];
+    el.querySelectorAll('a[href]').forEach(a => {
+      const t = linkText(a); if (!t || t.length > 30 || a === home || t === m.brand || (m.brand && t.startsWith(m.brand)) || UTIL.test(t) || seen.has(t.toLowerCase())) return;
+      seen.add(t.toLowerCase()); out.push({ a, t });
     });
-    doc.querySelectorAll('nav').forEach(n => n.remove());
-    if (navEl.isConnected && navEl.tagName === 'ASIDE') navEl.remove();
+    return out;
+  };
+  const inFooter = el => !!el.closest('footer,[class*="footer"],[id*="footer"]');
+  const cands = [...doc.querySelectorAll('nav,header,[role="navigation"],[class*="menu"],[class*="nav"],[id*="menu"],[id*="nav"],[class*="drawer"],[class*="sidebar"],aside')].filter(el => !inFooter(el) && el !== doc.body);
+  let navEl = null, best = 1;
+  // real menus (<nav>, role=navigation, the header) count extra; a container with dozens of links is a page, not a menu
+  cands.forEach(el => { const n = navLinks(el).length, sc = n + (el.matches('nav,[role="navigation"],header') ? 3 : 0); if (n >= 2 && n <= 40 && sc > best) { best = sc; navEl = el; } });
+  if (!navEl) {   // no menu element: the first container near the top holding 3+ short links
+    const firstHead = doc.querySelector('h1,h2');
+    navEl = [...doc.body.querySelectorAll('div,ul')].find(el => !inFooter(el) && navLinks(el).length >= 3 && navLinks(el).length <= 10 && (!firstHead || el.compareDocumentPosition(firstHead) & Node.DOCUMENT_POSITION_FOLLOWING) && !el.querySelector('h1,h2,h3,p')) || null;
+  }
+  if (navEl) {
+    navLinks(navEl).forEach(({ a, t }) => {
+      const item = { text: t, href: a.getAttribute('href') || '#' };
+      if (isBtn(a) && a.tagName === 'A' && !m.navCta) m.navCta = item; else if (m.nav.length < 7) m.nav.push(item);
+    });
+    // a "book now" style button elsewhere in the header is the call to action
+    if (!m.navCta) { const h = doc.querySelector('header'); const b = h && [...h.querySelectorAll('a[href]')].find(a => a !== navEl && !navEl.contains(a) && linkText(a) && linkText(a).length < 24 && !UTIL.test(linkText(a)) && linkText(a) !== m.brand); if (b) m.navCta = { text: linkText(b), href: b.getAttribute('href') || '#' }; }
+    m.nav = m.nav.filter(n => !m.navCta || n.text !== m.navCta.text);
+    if (!navEl.querySelector('h1,h2') ) navEl.remove();
+    doc.querySelectorAll('nav').forEach(n => { if (!inFooter(n) && !n.querySelector('h1,h2')) n.remove(); });
   }
   if (logo && logo.isConnected) logo.remove();
+  // a logo set as a heading (<h1 class="logo">Brand</h1>) isn't the page's title
+  // …only when the page has a title of its own elsewhere (on a one-screen app, the brand heading *is* the title)
+  doc.querySelectorAll('header h1,header h2,a[href="/"] h1,h1 a[href="/"]').forEach(h => {
+    const hh = h.closest('h1,h2') || h; if (!hh.isConnected || clean(hh.textContent) !== m.brand) return;
+    const other = [...doc.querySelectorAll('h1')].some(x => x !== hh && !hh.contains(x) && clean(x.textContent) && clean(x.textContent) !== m.brand);
+    if (other) hh.remove();
+  });
 
   const blocks = [];
   const push = b => blocks.push(b);
@@ -148,11 +229,20 @@ function extract(html) {
         if (cite) cite.remove();
         push({ t: 'quote', text: clean(c.textContent).replace(/^["“]|["”]$/g, ''), cite: ct.replace(/^[—–-]\s*/, '') });
       }
-      else if (t === 'FORM') {
-        const fields = [...c.querySelectorAll('input:not([type=hidden]):not([type=submit]):not([type=checkbox]):not([type=radio])')]
-          .map(f => f.getAttribute('placeholder') || f.getAttribute('aria-label') || f.name || 'Your answer').slice(0, 3);
-        const sub = c.querySelector('button,[type=submit]');
-        if (c.querySelector('h1,h2,h3,h4,p')) walk(c);
+      else if (t === 'FORM' || c.hasAttribute('data-rk-form')) {
+        let fields = []; try { fields = JSON.parse(c.getAttribute('data-rk-form') || '[]'); } catch {}
+        // the button that sends it: a submit, else the last button with words (custom dropdowns are wordless buttons too)
+        if (c.hasAttribute('data-rk-skip')) continue;
+        const bs = [...c.querySelectorAll('button,[type=submit]')].filter(b => (clean(b.textContent) || b.value) && !/^(close|cancel|dismiss|no thanks|×|x)$/i.test(clean(b.textContent) || b.value));
+        let sub = bs.find(b => b.getAttribute('type') === 'submit') || bs[bs.length - 1] || null;
+        if (!sub) {   // apps often put the button just after the form
+          const nx = c.nextElementSibling, b = nx && (nx.matches('button,a[role=button],[type=submit]') ? nx : nx.children.length <= 2 && nx.querySelector('button'));
+          if (b && clean(b.textContent).length <= 30) { sub = b; b.remove(); }
+        }
+        // the form's own heading or intro still comes along; its field labels don't become headings
+        c.querySelectorAll('[data-rk-label],label').forEach(l => l.remove());
+        if (sub) sub.setAttribute('data-rk-submit', '');
+        if (c.querySelector('h1,h2,h3,h4,p')) { const keep = sub && sub.parentNode; if (sub) sub.remove(); walk(c); if (sub && keep) keep.appendChild(sub); }
         push({ t: 'form', fields: fields.length ? fields : ['Email address'], submit: sub ? (clean(sub.textContent) || sub.value || 'Submit') : 'Submit' });
       }
       else if (t === 'A' || t === 'BUTTON') {
@@ -166,7 +256,8 @@ function extract(html) {
         const kids = [...c.children];
         if (!kids.length) { if (txt) push({ t: 'p', text: txt }); }
         else if (kids.every(k => INLINE.has(k.tagName))) {
-          if (kids.every(k => k.tagName === 'A' || k.tagName === 'BR')) kids.filter(k => k.tagName === 'A').forEach(a => push({ t: 'btn', text: clean(a.textContent), href: a.getAttribute('href') || '#' }));
+          // a row of short links is buttons; a link holding a whole card's words is content
+          if (kids.every(k => k.tagName === 'A' || k.tagName === 'BR') && kids.every(k => k.tagName !== 'A' || clean(k.textContent).length < 40)) kids.filter(k => k.tagName === 'A').forEach(a => push({ t: 'btn', text: clean(a.textContent), href: a.getAttribute('href') || '#' }));
           else if (txt) push({ t: 'p', text: txt });
         }
         else walk(c);
@@ -322,7 +413,7 @@ function __probe(ID, AUTO, MAX) {
     for (var i = 0; i < N && splits < 3; i++) {
       var el = all[i], ch = el.children; if (ch.length < 5 || /^(UL|OL|NAV|SELECT|TBODY|TR|svg)$/i.test(el.tagName)) continue;
       var one = 0, words = 0;
-      for (var j = 0; j < ch.length; j++) { var t = (ch[j].textContent || '').trim(); if (!ch[j].children.length && t.length <= 1) one++; else if (t && !/\s/.test(t) && t.length <= 16) words++; }
+      for (var j = 0; j < ch.length; j++) { var t = (ch[j].textContent || '').trim(); if (!ch[j].children.length && t.length === 1) one++; else if (t && !/\s/.test(t) && t.length <= 16) words++; }
       var letters = one / ch.length > 0.7, wsplit = !letters && words / ch.length > 0.8 && /^(H1|H2|H3|P|SPAN|DIV)$/.test(el.tagName) && (el.textContent || '').trim().split(/\s+/).length >= 3;
       if (!letters && !wsplit) continue;
       var a = getComputedStyle(ch[0]), b = getComputedStyle(ch[Math.min(2, ch.length - 1)]);
@@ -344,11 +435,19 @@ function __probe(ID, AUTO, MAX) {
     // waiting to reveal on scroll
     var hidden = 0;
     for (var i = 0; i < N; i++) { var rr = all[i].getBoundingClientRect(); if (rr.top > innerHeight && rr.height > 20) { var c2 = getComputedStyle(all[i]); if (c2.opacity === '0' || (c2.transform !== 'none' && /^matrix\(1, 0, 0, 1, 0, [1-9]/.test(c2.transform))) hidden++; } }
-    var code = ''; Array.prototype.forEach.call(document.scripts, function (sc) { if (code.length < 4e6) code += (sc.src || '') + '\n' + (sc.textContent || '').slice(0, 2e6); });
+    // the page's own code — not Reskin's probe and runners, whose source names every library it looks for
+    var code = ''; Array.prototype.forEach.call(document.scripts, function (sc) {
+      var t = sc.textContent || '';
+      if (/__reskin|readMotion|__rkMount|__rkElem|__rkStudio|__transplant/.test(t)) return;
+      if (code.length < 4e6) code += (sc.src || '') + '\n' + t.slice(0, 2e6);
+    });
+    // libraries announce themselves as globals once loaded (bundled sites hide their names in file names)
+    var G = window, glob = [['GSAP', G.gsap || G.TweenMax], ['ScrollTrigger', G.ScrollTrigger], ['Lenis smooth scroll', G.Lenis || G.lenis || document.documentElement.classList.contains('lenis')], ['three.js', G.THREE], ['Lottie', G.lottie || G.bodymovin], ['Swiper', G.Swiper], ['AOS', G.AOS], ['Locomotive Scroll', G.LocomotiveScroll || document.querySelector('[data-scroll-container]')], ['Barba page transitions', G.barba], ['Webflow interactions', G.Webflow || document.documentElement.hasAttribute('data-wf-page')]];
     var libs = [];
     [['GSAP', /gsap|TweenMax|ScrollTrigger/], ['Framer Motion', /framer-motion|whileInView|AnimatePresence|useMotionValue/], ['Lenis smooth scroll', /lenis/i], ['AOS', /AOS\.init|data-aos/],
      ['three.js', /THREE\.|WebGLRenderer/], ['Lottie', /lottie|bodymovin/i], ['Typed.js', /new Typed\(/], ['Splitting / SplitText', /Splitting\(|SplitText/], ['Swiper', /swiper/i], ['anime.js', /anime\(\{/]]
       .forEach(function (l) { if (l[1].test(code) || (l[0] === 'AOS' && document.querySelector('[data-aos]'))) libs.push(l[0]); });
+    glob.forEach(function (g) { if (g[1] && libs.indexOf(g[0]) < 0 && !(g[0] === 'ScrollTrigger' && libs.indexOf('GSAP') < 0 && !G.gsap)) libs.push(g[0]); });
     if (hidden >= 2 || /IntersectionObserver|whileInView|ScrollTrigger|data-aos/.test(code)) items.push({ kind: 'reveal', title: 'Things fade or slide in as you scroll', how: (hidden ? hidden + ' parts wait off-screen, hidden' : 'Watches the scroll position') + (/IntersectionObserver/.test(code) ? ' (IntersectionObserver)' : '') + (/ScrollTrigger/.test(code) ? ' (GSAP ScrollTrigger)' : ''), tech: 'js' });
     if (document.querySelector('canvas') && document.querySelector('canvas').getBoundingClientRect().width > innerWidth * 0.5) items.push({ kind: 'canvas', title: 'An animated background is drawn live', how: 'A full-width <canvas>' + (/webgl/i.test(code) ? ' using WebGL' : ''), tech: 'js' });
     if (/mousemove|pointermove/.test(code)) items.push({ kind: 'pointer', title: 'Things react to your mouse', how: 'Listens to pointer movement (tilt, follow or spotlight effects)', tech: 'js' });
@@ -803,6 +902,8 @@ function __transplant(DATA) {
     var norm = function (s) { return (s || '').replace(/\s+/g, ' ').trim(); };
     var own = function (el) { var s = ''; for (var n = el.firstChild; n; n = n.nextSibling) if (n.nodeType === 3) s += n.nodeValue; return norm(s); };
     var vis = function (el) { var r = el.getBoundingClientRect(); if (r.width < 1 || r.height < 1) return false; var s = S(el); return s.display !== 'none' && s.visibility !== 'hidden'; };
+    // laid out but waiting for the design's own reveal (split-text titles start hidden): still the page's words to replace
+    var present = function (el) { var r = el.getBoundingClientRect(); if (r.width < 1 || r.height < 1 || S(el).display === 'none') return false; return !el.closest('[aria-hidden="true"]'); };
     var hide = function (el) { if (el && el !== B && el !== root) { el.style.setProperty('display', 'none', 'important'); el.setAttribute('data-rk-hidden', ''); done.add(el); } };
     var inside = function (el, list) { for (var i = 0; i < list.length; i++) if (list[i] && list[i] !== el && list[i].contains(el)) return true; return false; };
     var before = function (a, b) { return !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING); };
@@ -939,7 +1040,7 @@ function __transplant(DATA) {
     var zones = [nav, foot].filter(Boolean);
 
     // ---- headings (tags first; otherwise the biggest text acts as the title)
-    var heads = Array.prototype.slice.call(B.querySelectorAll('h1,h2,h3,h4,h5,h6')).filter(function (h) { return vis(h) && norm(h.textContent) && !inside(h, zones); })
+    var heads = Array.prototype.slice.call(B.querySelectorAll('h1,h2,h3,h4,h5,h6')).filter(function (h) { return present(h) && norm(h.textContent) && !inside(h, zones); })
       .map(function (h) { return { el: h, lvl: +h.tagName[1], fs: parseFloat(S(h).fontSize) }; });
     var bySize = heads.slice().sort(function (a, b) { return b.fs - a.fs; });
     if (!heads.some(function (h) { return h.lvl === 1; })) {
@@ -1304,11 +1405,84 @@ function liveDoc(m, s, opt) {
   const font = s.myFont && ST ? { stack: ST.bodyFont, faces: ST.faces, links: ST.fontLinks } : null;
   const motion = typeof state !== 'undefined' && state.tgt && state.tgt.tokens && state.tgt.tokens.motion || null;
   const data = { content: liveContent(m), opts: { thumb: !!opt.thumb, recolor, font, motion } };
-  const tag = `<script>(${__transplant})(${jsonForScript(data)});<\/script>`;
-  const html = t.liveBase, i = html.toLowerCase().lastIndexOf('</body>');
+  const tag = `<script>(${__transplant})(${jsonForScript(data)});<\/script><script>(${__rkUnstick})();<\/script>`;
+  const html = injectHeadStart(t.liveBase, SRCDOC_SHIM), i = html.toLowerCase().lastIndexOf('</body>');
   return i >= 0 ? html.slice(0, i) + tag + html.slice(i) : html + tag;
 }
+// A design runs here as "about:srcdoc", and plenty of site code builds addresses from its own location
+// (new URL(path, location.href)) — that throws, and the loader, split text, 3D… never start. Resolve against the
+// page's real address (its <base>) instead. Goes first in <head>, before any of the design's scripts.
+function __rkSrcdocShim() {
+  var U = window.URL; if (!U || U.__rk) return;
+  function P(u, b) {
+    if (arguments.length > 1) { try { return new U(u, b); } catch (e) { try { return new U(u, document.baseURI); } catch (e2) { throw e; } } }
+    try { return new U(u); } catch (e) { try { return new U(u, document.baseURI); } catch (e3) { throw e; } }
+  }
+  P.prototype = U.prototype; P.__rk = true;
+  ['createObjectURL', 'revokeObjectURL', 'canParse', 'parse'].forEach(function (k) { if (U[k]) P[k] = U[k].bind(U); });
+  window.URL = P;
+}
+const injectHeadStart = (html, tag) => { const m = /<head[^>]*>/i.exec(html); return m ? html.slice(0, m.index + m[0].length) + tag + html.slice(m.index + m[0].length) : tag + html; };
+const SRCDOC_SHIM = `<script>(${__rkSrcdocShim})();<\/script>`;
+// A design's own scripts run its loader, its reveals and its transitions. When one of them can't finish here (it waits
+// on a service, a module or a font that never arrives), the page would sit behind its loading screen or stay
+// invisible. This steps in only for what's stuck: animations that do run are left alone.
+function __rkUnstick() {
+  var W = window, D = document, done = [];
+  function cs(el) { return W.getComputedStyle(el); }
+  function opaque(c) { var m = /rgba?\(([^)]+)\)/.exec(c.backgroundColor); if (c.backgroundImage && c.backgroundImage !== 'none') return true; if (!m) return false; var a = m[1].split(','); return a.length < 4 || +a[3] > 0.5; }
+  function fade(el, how) {
+    if (done.indexOf(el) >= 0) return; done.push(el);
+    el.style.setProperty('transition', 'opacity .6s ease, visibility 0s linear .6s', 'important');
+    el.style.setProperty('opacity', '0', 'important'); el.style.setProperty('pointer-events', 'none', 'important');
+    setTimeout(function () { el.style.setProperty('visibility', 'hidden', 'important'); }, 650);
+    if (how) try { console.info('[reskin] ' + how); } catch (e) {}
+  }
+  function show(el) {
+    if (done.indexOf(el) >= 0) return; done.push(el);
+    el.style.setProperty('transition', 'opacity .7s cubic-bezier(.2,.7,.2,1), transform .7s cubic-bezier(.2,.7,.2,1)', 'important');
+    el.style.setProperty('visibility', 'visible', 'important'); el.style.setProperty('opacity', '1', 'important');
+    if (/matrix/.test(cs(el).transform)) el.style.setProperty('transform', 'none', 'important');
+  }
+  // 1. a loading screen: fixed, on top of everything, covering the window, still there
+  function covers() {
+    var out = [], all = D.body ? D.body.getElementsByTagName('*') : [];
+    for (var i = 0; i < all.length && i < 4000; i++) {
+      var el = all[i], c = cs(el); if (c.position !== 'fixed' || c.display === 'none' || c.visibility === 'hidden' || c.opacity === '0') continue;
+      var r = el.getBoundingClientRect(); if (r.width < innerWidth * 0.85 || r.height < innerHeight * 0.85 || !opaque(c)) continue;
+      var top = D.elementFromPoint(innerWidth / 2, innerHeight / 2); if (top && (el === top || el.contains(top))) out.push(el);
+    }
+    return out;
+  }
+  // 2. words and pictures on screen that are still invisible, waiting for a script that won't come
+  function stuck() {
+    var all = D.body ? D.body.querySelectorAll('h1,h2,h3,h4,p,li,a,button,img,picture,video,figure,[class*="title"],[class*="text"],[class*="reveal"],[data-aos],[data-scroll],[data-animate]') : [];
+    for (var i = 0; i < all.length; i++) {
+      var el = all[i], r = el.getBoundingClientRect(); if (r.width < 2 || r.height < 2 || r.bottom < 0 || r.top > innerHeight) continue;
+      var c = cs(el); if (c.display === 'none') continue;
+      if (!(c.visibility === 'hidden' || +c.opacity < 0.05)) continue;
+      // hidden on purpose: closed menus, dropdowns, dialogs, tooltips, and anything Reskin itself set aside
+      if (el.closest('[data-rk-orig],nav,[role="menu"],[role="dialog"],dialog,[aria-hidden="true"],[class*="menu"],[class*="dropdown"],[class*="modal"],[class*="tooltip"],[class*="popup"],[class*="drawer"]')) continue;
+      // only the outermost stuck piece: if its parent is hidden too, the parent is the one to show
+      var fixedLayer = false; for (var x = el; x && x !== D.body; x = x.parentElement) if (cs(x).position === 'fixed') { fixedLayer = true; break; }
+      if (fixedLayer) continue;
+      var p = el.parentElement, pc = p && cs(p);
+      if (pc && (pc.visibility === 'hidden' || +pc.opacity < 0.05) && p !== D.body) { if (!p.closest('nav,[role="dialog"],dialog,[class*="menu"],[class*="modal"]')) show(p); continue; }
+      show(el);
+    }
+  }
+  var seenAt = new WeakMap();
+  function check() {
+    covers().forEach(function (el) { var t = seenAt.get(el); if (!t) seenAt.set(el, Date.now()); else if (Date.now() - t > 1500) fade(el, 'a loading screen never finished — hidden so your page shows'); });
+    stuck();
+  }
+  // give the design's own loader time to do its thing first
+  setTimeout(function () { check(); setInterval(check, 1200); }, 3500);
+  // things that only appear once scrolled to: if they're still invisible a moment after arriving, show them
+  var st = 0; addEventListener('scroll', function () { clearTimeout(st); st = setTimeout(stuck, 1400); }, { passive: true });
+}
 function withProbe(html, id) {
+  html = injectHeadStart(html, SRCDOC_SHIM);
   const tag = `<script>(${__probe})(${jsonForScript(id)}, true, 7000);<\/script>`;
   const i = html.toLowerCase().lastIndexOf('</body>');
   return i >= 0 ? html.slice(0, i) + tag + html.slice(i) : html + tag;
