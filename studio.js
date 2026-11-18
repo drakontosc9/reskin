@@ -88,7 +88,7 @@ function __rkElem(D) {
   }
   function labelOf(el) {
     var t = (el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('alt') || el.innerText || el.textContent || '').trim().split('\n')[0];
-    return t.replace(/\s+/g, ' ').slice(0, 40) || el.tagName.toLowerCase();
+    return t.replace(/\s+/g, ' ').slice(0, 40) || ({ div: 'Box', span: 'Text', a: 'Link', button: 'Button', img: 'Picture', svg: 'Icon', li: 'List item', ul: 'List', section: 'Section', article: 'Card', canvas: 'Animation', video: 'Video', input: 'Field' })[el.tagName.toLowerCase()] || 'Part';
   }
   function pathOf(el) {
     var parts = [];
@@ -224,6 +224,13 @@ function __rkStudio(EDITS, MODE) {
     var txt = kind === 'image' ? (el.getAttribute('alt') || 'image') : ((h || el).innerText || (h || el).textContent || '').trim().replace(/\s+/g, ' ').slice(0, 80);
     return { kind: kind, label: txt, href: el.getAttribute && el.getAttribute('href') || '' };
   }
+  var TAGNAME = { div: 'Box', span: 'Text', p: 'Paragraph', h1: 'Heading', h2: 'Heading', h3: 'Heading', h4: 'Heading', a: 'Link', button: 'Button', img: 'Picture', svg: 'Icon', ul: 'List', ol: 'List', li: 'List item', section: 'Section', header: 'Header', footer: 'Footer', nav: 'Menu', article: 'Card', figure: 'Figure', blockquote: 'Quote', form: 'Form', input: 'Field', video: 'Video', canvas: 'Animation' };
+  function nameOf(el) {
+    var t = (el.innerText || '').trim().replace(/\s+/g, ' ');
+    if (t) return t.slice(0, 40);
+    var tag = el.tagName.toLowerCase(), alt = el.getAttribute && (el.getAttribute('alt') || el.getAttribute('aria-label'));
+    return alt ? alt.slice(0, 40) : (TAGNAME[tag] || 'Part');
+  }
   var FOCUS = null;   // "Edit in detail": one section is shown, and any part of it can be chosen
   function targetOf(node) {
     if (FOCUS) {
@@ -231,7 +238,7 @@ function __rkStudio(EDITS, MODE) {
       var t0 = node.nodeType === 1 ? node : node.parentElement;
       var ed = t0.closest && t0.closest('[data-rk-edit]'); if (ed) return { el: ed, editId: ed.getAttribute('data-rk-edit') };
       if (t0.closest('svg')) t0 = t0.closest('svg');
-      return { el: t0, addr: { scope: FOCUS, kind: 'node', path: pathFrom(fr, t0) }, info: { kind: 'node', label: (t0.innerText || t0.getAttribute('alt') || t0.tagName).trim().replace(/\s+/g, ' ').slice(0, 40), href: t0.getAttribute('href') || '', cs: snapEl(t0) } };
+      return { el: t0, addr: { scope: FOCUS, kind: 'node', path: pathFrom(fr, t0) }, info: { kind: 'node', label: nameOf(t0), href: t0.getAttribute('href') || '', cs: snapEl(t0) } };
     }
     for (var el = node; el && el.nodeType === 1 && el !== document.body; el = el.parentElement) {
       if (el.classList.contains('rk-tag')) return null;
@@ -456,6 +463,15 @@ function __rkStudio(EDITS, MODE) {
     if (d.rkInnerSet && MODE === 'edit') { var tf = frameOf(d.rkInnerSet.frame); if (tf) tf.contentWindow.postMessage({ rkInnerSet: d.rkInnerSet.item }, '*'); }
     if (d.rkSetStyle && MODE === 'edit') { var se = find(d.rkSetStyle.addr); if (se) Object.keys(d.rkSetStyle.style).forEach(function (k) { var v = d.rkSetStyle.style[k]; if (v === '' || v == null) se.style.removeProperty(k); else se.style.setProperty(k, v, 'important'); }); }
     if (d.rkSetText && MODE === 'edit') { var sx = find(d.rkSetText.addr); if (sx) setText(sx, d.rkSetText.text); }
+    if (d.rkDetailAddr && MODE === 'edit') {
+      var da = d.rkDetailAddr, de = find(da), dr = root(da.scope);
+      if (de && dr) {
+        document.querySelectorAll('[data-rk-on]').forEach(function (x) { x.removeAttribute('data-rk-on'); });
+        de.setAttribute('data-rk-on', '');
+        var node = { scope: da.scope, kind: 'node', path: de === dr ? '' : pathFrom(dr, de) };
+        parent.postMessage({ rkPick: { addr: node, info: { kind: 'node', label: nameOf(de), href: de.getAttribute('href') || '', cs: snapEl(de) }, editId: null }, reveal: true }, '*');
+      }
+    }
     if (d.rkPickAddr && MODE === 'edit') { var pe = find(d.rkPickAddr); if (pe) { var pt = targetOf(pe); if (pt) { pe.setAttribute('data-rk-on', ''); parent.postMessage({ rkPick: { addr: pt.addr || null, info: pt.info || null, editId: pt.editId || null } }, '*'); } } }
     if (d.rkPickParent && MODE === 'edit') { var pf = frameOf(d.rkPickParent.frame); if (pf) pf.contentWindow.postMessage({ rkPickParent: d.rkPickParent.item }, '*'); }
     if ('rkFocus' in d && MODE === 'edit') {
@@ -974,7 +990,7 @@ addEventListener('message', e => {
       else startAsk({ compId, addr: t.addr, info: t.info });
       return;
     }
-    S.ask = null; S.sel = t; S.propsFor = null;
+    S.ask = null; S.sel = t; S.propsFor = null; if (d.reveal) S.reveal = true;
     stPost({ rkHi: t.editId ? { editId: t.editId } : { addr: t.addr } });
     renderSideStudio();
   }
@@ -1146,7 +1162,7 @@ function renderDetail(t) {
   const row = (id, name, min, max, val, unit = 'px') => `<label class="dt-row"><span>${name}</span><input type="range" id="${id}" min="${min}" max="${max}" value="${Math.round(val || 0)}"><output id="${id}V">${Math.round(val || 0)}${unit}</output></label>`;
   side.innerHTML = `<div class="bx-h"><h3>✎ ${esc(quote(label))} <small>${esc(cs.tag || '')}</small></h3><button class="icon" id="dtX" title="Close">✕</button></div>
     <div class="bx-pad dt">
-      ${text != null ? `<label class="field"><span>Text</span><textarea id="dtText" rows="${Math.min(6, Math.ceil(text.length / 34) + 1)}">${esc(text)}</textarea></label>` : ''}
+      ${text && String(text).trim() ? `<label class="field"><span>Text</span><textarea id="dtText" rows="${Math.min(6, Math.ceil(text.length / 34) + 1)}">${esc(text)}</textarea></label>` : ''}
       <div class="dt-cols">
         <label class="dt-col"><span>Text colour</span><input type="color" id="dtColor" value="${toHex(st.color || cs.color)}"></label>
         <label class="dt-col"><span>Background</span><input type="color" id="dtBg" value="${toHex(st['background-color'] || cs.bg)}"></label>
@@ -1225,7 +1241,19 @@ function saveTextEdit(addr, text, was) {
 function ctxItems(t, hidden) {
   const items = [], edits = projectEdits();
   if (t.addr && t.addr.kind === 'node') return [{ label: 'Edit this part…', icon: '✎', run: () => { S.sel = t; renderSideStudio(); } }, { label: 'Edit text', icon: '✎', hint: 'or double-click', run: () => stPost({ rkEditText: t.addr }) }, '-', { label: 'Back to the page', icon: '←', run: leaveFocus }];
-  const configure = () => { S.ask = null; S.sel = t.editId ? { editId: t.editId } : t; renderSideStudio(); stPost({ rkHi: t.editId ? { editId: t.editId } : { addr: t.addr } }); };
+  const configure = () => {
+    S.ask = null; S.reveal = true;
+    if (t.editId) {
+      const e = editById(t.editId);
+      S.sel = { editId: t.editId }; S.propsFor = e && hasProps(compById(e.compId)) ? { editId: e.id } : null;
+      renderSideStudio(); stPost({ rkHi: { editId: t.editId } });
+      return;
+    }
+    const b = t.addr.kind === 'section' && blockById(t.addr.scope);
+    if (b && b.kind === 'comp' && hasProps(compById(b.compId))) { S.sel = t; S.propsFor = { blockId: b.id }; renderSideStudio(); stPost({ rkHi: { addr: t.addr } }); return; }
+    S.propsFor = null;
+    stPost({ rkDetailAddr: t.addr });   // the page answers with the part and its current look → the detail editor
+  };
   if (t.editId) {
     const e = editById(t.editId); if (!e) return [{ label: 'Configure…', icon: '⚙', run: configure }];
     const c = e.compId && compById(e.compId);
@@ -1296,7 +1324,14 @@ function askSteps(a) {
 }
 const opt = (name, val, cur, title, sub, extra = '') => `<label class="opt ${cur === val ? 'on' : ''}"><input type="radio" name="${name}" value="${val}" ${cur === val ? 'checked' : ''}><div><b>${title}</b>${sub ? `<span>${sub}</span>` : ''}${extra}</div></label>`;
 
+function revealSide() {
+  const s = $('stSide'); if (!s) return;
+  const r = s.getBoundingClientRect();
+  if (r.top > innerHeight - 80 || r.bottom < 80) s.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  s.classList.remove('st-flash'); void s.offsetWidth; s.classList.add('st-flash');
+}
 function renderSideStudio() {
+  if (S.reveal) { S.reveal = false; setTimeout(revealSide, 30); }
   const side = $('stSide'); if (!side) return;
   const a = S.ask;
   if (!a) return renderSelInfo();

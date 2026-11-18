@@ -694,6 +694,82 @@ function openCtx(x, y, items) {
   setTimeout(() => addEventListener('mousedown', function off(e) { if (!m.contains(e.target)) { closeCtx(); removeEventListener('mousedown', off); } }), 0);
 }
 
+/* ------------------------------------------------------------------ 8. Reskin's own colour picker */
+// Every <input type="color"> in the app opens this instead of the operating system's dialog. It sets the input's
+// value and fires the usual input / change events, so the panels that use colour inputs don't need to know.
+const CP = { el: null, input: null, start: null };
+const hexOf = rgb => '#' + rgb.slice(0, 3).map(v => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, '0')).join('');
+function hsvToRgb(h, s, v) { const f = n => { const k = (n + h / 60) % 6; return v - v * s * Math.max(0, Math.min(k, 4 - k, 1)); }; return [f(5) * 255, f(3) * 255, f(1) * 255]; }
+function rgbToHsv([r, g, b]) {
+  r /= 255; g /= 255; b /= 255; const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+  let h = 0; if (d) h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return [(h * 60 + 360) % 360, mx ? d / mx : 0, mx];
+}
+function pageSwatches() {
+  const out = [], add = c => { try { const h = hexOf(Array.isArray(c) ? c : cssToRgb(c)); if (!out.includes(h)) out.push(h); } catch {} };
+  const st = B.project && B.project.style;
+  if (st && st.pal) { const p = (typeof withOverrides === 'function' ? withOverrides(st) : st).pal; ['accent', 'text', 'bg', 'surface', 'card', 'muted', 'border', 'accentText'].forEach(k => p[k] && !/gradient/.test(p[k]) && add(p[k])); }
+  const T = state.tgt && state.tgt.tokens;
+  if (T) { [T.accent, T.text, T.bg, T.surface, ...(T.palette || [])].filter(Boolean).forEach(add); }
+  if (brandColor()) add(brandColor());
+  return out.slice(0, 16);
+}
+function closeColorPop(commit = true) {
+  if (!CP.el) return;
+  const input = CP.input, changed = input && input.value !== CP.start;
+  CP.el.remove(); CP.el = null; CP.input = null;
+  if (commit && changed) {
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    const r = store.get('reskin.recentColors', []).filter(c => c !== input.value); r.unshift(input.value); store.set('reskin.recentColors', r.slice(0, 8));
+  }
+}
+function openColorPop(input) {
+  closeColorPop();
+  CP.input = input; CP.start = input.value;
+  let [h, sa, v] = rgbToHsv(cssToRgb(input.value || '#000000'));
+  const pop = CP.el = document.createElement('div'); pop.className = 'cpop';
+  const sw = (list, title) => list.length ? `<div class="cp-sec"><b>${title}</b><div class="cp-sw">${list.map(c => `<button type="button" data-c="${c}" title="${c}" style="--c:${c}"></button>`).join('')}</div></div>` : '';
+  pop.innerHTML = `${sw(pageSwatches(), 'On your page')}${sw(store.get('reskin.recentColors', []), 'Recent')}
+    <div class="cp-sv"><i class="cp-knob"></i></div>
+    <input class="cp-hue" type="range" min="0" max="360" step="1" aria-label="Hue">
+    <div class="cp-row"><span class="cp-now"></span><input class="cp-hex" spellcheck="false" maxlength="7" aria-label="Hex colour">
+      ${window.EyeDropper ? '<button type="button" class="ghost cp-drop" title="Pick a colour from the screen">⌖</button>' : ''}
+      <button type="button" class="primary cp-ok">Done</button></div>`;
+  document.body.appendChild(pop);
+  const q = sel => pop.querySelector(sel), sv = q('.cp-sv'), knob = q('.cp-knob'), hue = q('.cp-hue'), hex = q('.cp-hex'), now = q('.cp-now');
+  const paint = (fire = true) => {
+    const c = hexOf(hsvToRgb(h, sa, v));
+    sv.style.setProperty('--hue', `hsl(${h} 100% 50%)`); knob.style.left = sa * 100 + '%'; knob.style.top = (1 - v) * 100 + '%';
+    hue.value = h; now.style.background = c; if (document.activeElement !== hex) hex.value = c;
+    if (fire && input.value !== c) { input.value = c; input.dispatchEvent(new Event('input', { bubbles: true })); }
+  };
+  const setHex = c => { try { [h, sa, v] = rgbToHsv(cssToRgb(c)); paint(); } catch {} };
+  sv.addEventListener('pointerdown', e => {
+    sv.setPointerCapture(e.pointerId);
+    const move = ev => { const r = sv.getBoundingClientRect(); sa = Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width)); v = 1 - Math.max(0, Math.min(1, (ev.clientY - r.top) / r.height)); paint(); };
+    move(e); sv.onpointermove = move; sv.onpointerup = () => { sv.onpointermove = null; };
+  });
+  hue.oninput = () => { h = +hue.value; paint(); };
+  hex.oninput = () => { if (/^#[0-9a-f]{6}$/i.test(hex.value.trim())) setHex(hex.value.trim()); };
+  hex.onkeydown = e => { if (e.key === 'Enter') closeColorPop(); };
+  pop.querySelectorAll('[data-c]').forEach(b => b.onclick = () => setHex(b.dataset.c));
+  if (q('.cp-drop')) q('.cp-drop').onclick = async () => { try { const r = await new EyeDropper().open(); setHex(r.sRGBHex); } catch {} };
+  q('.cp-ok').onclick = () => closeColorPop();
+  paint(false);
+  // place it by the colour box, inside the window
+  const r = input.getBoundingClientRect(), pr = pop.getBoundingClientRect();
+  let left = Math.min(r.left, innerWidth - pr.width - 10), top = r.bottom + 8;
+  if (top + pr.height > innerHeight - 10) top = Math.max(10, r.top - pr.height - 8);
+  pop.style.left = Math.max(10, left) + 'px'; pop.style.top = top + 'px';
+  setTimeout(() => addEventListener('pointerdown', function off(e) { if (!CP.el) return removeEventListener('pointerdown', off, true); if (!CP.el.contains(e.target) && e.target !== input) { removeEventListener('pointerdown', off, true); closeColorPop(); } }, true), 0);
+}
+document.addEventListener('click', e => { const i = e.target.closest && e.target.closest('input[type=color]'); if (!i) return; e.preventDefault(); if (CP.input === i) closeColorPop(); else openColorPop(i); }, true);
+document.addEventListener('keydown', e => {
+  const i = e.target.closest && e.target.closest('input[type=color]');
+  if (i && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openColorPop(i); }
+  if (e.key === 'Escape' && CP.el) { const inp = CP.input, start = CP.start; closeColorPop(false); if (inp && inp.value !== start) { inp.value = start; inp.dispatchEvent(new Event('input', { bubbles: true })); } }
+}, true);
+
 /* ------------------------------------------------------------------ start */
 (function boot() {
   document.querySelector('.intro').hidden = false;
