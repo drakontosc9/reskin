@@ -651,7 +651,7 @@ function __transplant(DATA) {
   var C = DATA.content, O = DATA.opts || {}, doc = document, root = doc.documentElement;
   window.__reskinStart = function () {};               // don't run the measuring probe in live pages
   var gate = doc.createElement('style');
-  var keep = O.thumb ? 'html{overflow:hidden!important;scrollbar-width:none}' : 'html{scroll-behavior:smooth}';
+  var keep = O.thumb ? 'html,body{overflow:hidden!important}*{scrollbar-width:none!important}*::-webkit-scrollbar{display:none!important}' :'html{scroll-behavior:smooth}';
   gate.textContent = 'body{opacity:0!important}' + keep;
   (doc.head || root).appendChild(gate);
   var shown = false;
@@ -1499,6 +1499,8 @@ function brandColor() {
   return state.autoBrand || null;
 }
 
+// thumbnails are scaled-down snapshots: no page or inner scrollbars (also inlined in __transplant, which runs inside the frame)
+const THUMB_CSS = 'html,body{overflow:hidden!important}*{scrollbar-width:none!important}*::-webkit-scrollbar{display:none!important}';
 function renderSite(m, s, opt = {}) {
   if (s.live) return liveDoc(m, s, opt);
   s = withOverrides(s);
@@ -1555,7 +1557,7 @@ function renderSite(m, s, opt = {}) {
 <title>${esc(m.title || m.brand)}</title>
 ${opt.base ? `<base href="${esc(opt.base)}">` : ''}${fonts}
 <style>
-${siteCss(s)}${s.extraCss ? '\n' + s.extraCss : ''}${opt.thumb ? '\nhtml{overflow:hidden;scrollbar-width:none}' : ''}
+${siteCss(s)}${s.extraCss ? '\n' + s.extraCss : ''}${opt.thumb ? '\n' + THUMB_CSS : ''}
 </style>${opt.extraHead || ''}
 </head>
 <body>

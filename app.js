@@ -601,9 +601,10 @@ function addComps(items) {
 const compDoc = c => c.kind === 'tsx' ? tsxDoc(c.code, 'comp') : c.code;
 // thumbnails: same page, centred so small pieces (a button, a card) fill the tile
 const compThumbDoc = c => {
-  const center = '<style>html,body{min-height:100%}body{margin:0}#root{min-height:100vh;display:grid;place-items:center;padding:24px;box-sizing:border-box}</style>';
+  const center = c.kind === 'tsx' ? 'html,body{min-height:100%}body{margin:0}#root{min-height:100vh;display:grid;place-items:center;padding:24px;box-sizing:border-box}' : '';
+  const style = `<style>${center}${THUMB_CSS}</style>`;
   const html = compDoc(c), i = html.toLowerCase().indexOf('</head>');
-  return c.kind === 'tsx' && i >= 0 ? html.slice(0, i) + center + html.slice(i) : html;
+  return i >= 0 ? html.slice(0, i) + style + html.slice(i) : style + html;
 };
 
 function renderComps() {
@@ -725,12 +726,15 @@ async function switchToTarget() {
 /* ---- modal ---- */
 // static styles never need scripts; animated remixes run the target's own scripts (still isolated from this app)
 const sandboxFor = s => (s.live ? 'allow-scripts ' : '') + 'allow-popups allow-popups-to-escape-sandbox';
+// phones overlay their scrollbars: at phone width, don't let a classic scrollbar eat the 390px frame (preview only, not downloads)
+const PREVIEW_CSS = '<style>@media (max-width:480px){html{scrollbar-width:none}html::-webkit-scrollbar{display:none}}</style>';
+const injectPreviewCss = html => { const i = html.toLowerCase().indexOf('</head>'); return i >= 0 ? html.slice(0, i) + PREVIEW_CSS + html.slice(i) : PREVIEW_CSS + html; };
 function setModalDoc(html, s) {
   // a fresh iframe each time — reusing one and swapping srcdoc could leave it blank
   const f = document.createElement('iframe');
   f.setAttribute('sandbox', sandboxFor(s)); f.title = 'Full preview';
   $('mStage').replaceChildren(f);
-  f.srcdoc = html;
+  f.srcdoc = injectPreviewCss(html);
 }
 function openModal(s) {
   state.current = s;
