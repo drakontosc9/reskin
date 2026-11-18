@@ -2,27 +2,24 @@
 
 Paste your site — see it reimagined. Your content stays the same; only the design changes.
 
-- **Explore** — dozens of generated styles for your page, save the ones you like, download the HTML.
-- **Studio** — three connected workspaces on one project:
-  - **Site** — pick a template for your page.
-  - **Component** — your saved UI pieces (in your account when signed in). *Apply its style…* restyles all your
-    buttons to match one, or makes new templates from it.
-  - **Editor** — drag a component onto a button, heading, picture, card or section of your page (or click it, then
-    click the page). Studio asks plain questions — new or replacing? what does it say? what happens when it's
-    clicked (scroll, link, popup)? — shows a one-sentence summary, and writes the code. Components become
-    **bento tiles**: the parts around them reflow (sizes Auto, 1×1, 2×1, 1×2, 2×2, full width), or choose
-    *Keep everything where it is*. *Try it* makes buttons and popups work in the preview.
-  - **🔗 Links** — a node view of everything clickable: your page's buttons and the parts *inside* placed components
-    (folders, files, menu items) on the left; sections, back to top, popups and web pages on the right. Drag a
-    wire (or click one dot, then the other) to link them; click a wire to remove it.
-- **I want it to look like…** — drop a design (saved `.htm` page with its `_files` folder, or a `.tsx`/`.jsx` component) and get your site in that design, including an *animated remix* that keeps the original page's effects.
-- **Advanced** — choose a colour palette and hero type; drag images into logo / hero / feature slots.
-- **Components** — save UI pieces from uiverse.io, MUI and 21st.dev (by link or pasted code) into collections and use them as the design.
+Three tabs — a journey, not a sitemap:
 
-- **Component** — preview one component on its own, with variations (your brand colour, your words), and add it to your site.
-- **Build** — your site as a stack of parts: drag to reorder, hide, replace a part with a component or add a new one. A step-by-step
-  *wire up* panel asks what it replaces, what it should say, and when it shows (screens, after scrolling / a few seconds, dates).
-  **Download site** gives you the finished page as one HTML file.
+- **Explore** — the landing: paste your site (and, optionally, a design you love), press **Generate**.
+- **Studio** — the stage: your page in the middle, a **filmstrip** of generated styles underneath (click one to
+  put it on; ♡ to keep it; *More like this*, *Shuffle*, moods). **Reskin itself wears the style you pick** —
+  its colours and fonts follow your page (◐ in the header turns that off). Three modes:
+  - **Edit** — drag (or click, then click the page) a component onto any button, heading, picture, card or
+    section; plain questions, a one-sentence check, done. Components become **bento tiles** that the page
+    reflows around (or *keep everything where it is*). **Right-click** anything for *Edit text* (or double-click
+    to type right on the page), *Configure…*, *Replace with a component…*, *Link to…*, *Hide*, *Undo*.
+  - **Blocks** — the page as a stack of parts: drag to reorder, hide, add, and *when it shows* rules.
+  - **🔗 Links** — a node view: wire buttons and the parts inside components (folders, files, menu items) to
+    sections, popups or web pages.
+  - **⚙** — page settings: colour palette, hero type, which images go where.
+- **Library** — everything you keep: saved styles and components (by link from uiverse / MUI / 21st.dev, pasted
+  code, or files). **✂ Grab from a page**: open any saved page, click the part you want (Bigger / Smaller to
+  adjust) and save it as a component, with its look, fonts and images. **Import icons (.zip)** turns a zip of
+  SVGs into an icon collection. Click a component for its own page: preview, variations, add to your site.
 
 Everything runs in your browser; pages are rendered in sandboxed frames.
 
@@ -32,9 +29,10 @@ Everything runs in your browser; pages are rendered in sandboxed frames.
 |---|---|
 | `index.html` | the page and its styles |
 | `engine.js` | content extraction, sandbox, animated remix engine, style generator, renderer |
-| `app.js` | Explore / Saved / Advanced / Components tabs |
-| `builder.js`, `builder.css` | Component page + Build tab; `composeDoc` builds the finished page |
-| `studio.js`, `studio.css` | Studio tab: Site / Component / Editor, bento tiles, click actions, popups |
+| `app.js` | Explore, styles, the component library, page settings |
+| `builder.js`, `builder.css` | component page, the Blocks editor; `composeDoc` builds the finished page |
+| `studio.js`, `studio.css` | Studio stage: filmstrip, Edit / Blocks / Links, bento tiles, click actions, popups, right-click menu |
+| `shell.js` | the three tabs, Library, ⚙ sheet, the app wearing your style, grab-from-a-page, icon zips |
 | `serve.py` | local server + link-import proxy |
 | `cloud.js`, `config.js` | optional Supabase accounts and sync |
 | `supabase/schema.sql` | database tables + security rules for Supabase |

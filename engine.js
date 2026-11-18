@@ -253,6 +253,111 @@ function extract(html) {
 // Runs INSIDE the sandbox. Serialised with Function.toString().
 function __probe(ID, AUTO, MAX) {
   var sent = false;
+  // ---- motion: which elements rewrite their own text (typewriter / scramble), and how
+  var TXT = [], txtMap = new Map();
+  try {
+    new MutationObserver(function (list) {
+      list.forEach(function (m) {
+        var el = m.type === 'characterData' ? m.target.parentElement : m.target;
+        if (!el || el.nodeType !== 1 || /^(SCRIPT|STYLE|HEAD|TITLE)$/.test(el.tagName)) return;
+        var host = el.closest('h1,h2,h3,p,span,div') || el, rec = txtMap.get(host);
+        if (!rec) { rec = { el: host, n: 0, lens: [] }; txtMap.set(host, rec); TXT.push(rec); }
+        rec.n++; if (rec.lens.length < 60) rec.lens.push((host.textContent || '').length);
+      });
+    }).observe(document.documentElement, { subtree: true, characterData: true, childList: true });
+  } catch (e) {}
+  function readMotion() {
+    var items = [], all = document.body ? document.body.getElementsByTagName('*') : [], N = Math.min(all.length, 5000);
+    var sheetsTxt = [], kf = {}, hover = { lift: 0, grow: 0, glow: 0, color: 0, underline: 0, sel: [] };
+    function walk(rules) {
+      for (var i = 0; i < rules.length; i++) {
+        var r = rules[i];
+        if (r.type === 7) kf[r.name] = r.cssText;
+        else if (r.type === 1 && /:hover/.test(r.selectorText)) {
+          var c = r.style.cssText;
+          if (/transform:[^;]*translate(Y|3d)?\(\s*-/.test(c)) hover.lift++;
+          else if (/transform:[^;]*scale/.test(c)) hover.grow++;
+          if (/box-shadow|filter:[^;]*(drop-shadow|brightness)/.test(c)) hover.glow++;
+          if (/(^|;\s*)(background|color|border-color)/.test(c)) hover.color++;
+          if (/text-decoration|background-size/.test(c)) hover.underline++;
+          if (hover.sel.length < 4 && /transform|shadow/.test(c)) hover.sel.push(r.selectorText.slice(0, 60));
+        } else if (r.cssRules) walk(r.cssRules);
+      }
+    }
+    for (var si = 0; si < document.styleSheets.length; si++) { try { walk(document.styleSheets[si].cssRules); } catch (e) {} }
+    // keyframes actually in use, and what they do
+    var used = {}, eases = {}, durs = [];
+    for (var i = 0; i < N; i++) {
+      var cs = getComputedStyle(all[i]), an = cs.animationName;
+      if (an && an !== 'none') an.split(',').forEach(function (n, j) {
+        n = n.trim(); var u = used[n] || (used[n] = { n: 0, inf: false, dur: 0, steps: false, tags: {} });
+        u.n++; u.tags[all[i].tagName.toLowerCase()] = 1;
+        if (/infinite/.test(cs.animationIterationCount)) u.inf = true;
+        u.dur = parseFloat((cs.animationDuration.split(',')[j] || cs.animationDuration)) * 1000;
+        if (/steps/.test(cs.animationTimingFunction)) u.steps = true;
+      });
+      var tr = cs.transitionDuration;
+      if (tr && tr !== '0s' && /^(A|BUTTON)$/.test(all[i].tagName)) { durs.push(parseFloat(tr) * 1000); var e = cs.transitionTimingFunction.split(',')[0]; eases[e] = (eases[e] || 0) + 1; }
+    }
+    function kind(txt, u) {
+      if (/translateX\(\s*-?(50|100)%/.test(txt) && u.inf) return ['marquee', 'Things slide past in an endless loop (marquee)'];
+      if (u.steps && /width/.test(txt)) return ['typewriter', 'Text types itself out (CSS steps)'];
+      if (u.steps || (/opacity/.test(txt) && u.inf && u.dur <= 1500)) return ['blink', 'A blinking caret or pulse'];
+      if (/blur/.test(txt) && /opacity/.test(txt)) return ['blur-in', 'Things sharpen into view (blur + fade)'];
+      if (/opacity:\s*0/.test(txt) && /translate/.test(txt)) return ['fade-up', 'Things fade in while sliding into place'];
+      if (/clip-path|inset\(/.test(txt)) return ['wipe', 'Things are revealed by a wipe (clip-path)'];
+      if (/rotate\(\s*(360deg|1turn)/.test(txt)) return ['spin', 'Something spins'];
+      if (/background-position/.test(txt)) return ['flow', 'A gradient or shine flows across'];
+      if (/scale/.test(txt) && u.inf) return ['pulse', 'Something gently pulses'];
+      if (/scale/.test(txt)) return ['zoom', 'Things grow into view (scale)'];
+      if (/opacity/.test(txt)) return ['fade', 'Things fade in'];
+      return ['custom', 'A custom animation'];
+    }
+    Object.keys(used).forEach(function (n) {
+      var u = used[n], k = kind(kf[n] || '', u);
+      items.push({ kind: k[0], title: k[1], how: 'CSS @keyframes “' + n + '” on ' + u.n + ' element' + (u.n > 1 ? 's' : '') + ' (' + Object.keys(u.tags).slice(0, 3).join(', ') + '), ' + Math.round(u.dur) + ' ms' + (u.inf ? ', looping' : ''), tech: 'css' });
+    });
+    // headings split into letters / words (each piece animates on its own)
+    var splits = 0;
+    for (var i = 0; i < N && splits < 3; i++) {
+      var el = all[i], ch = el.children; if (ch.length < 5 || /^(UL|OL|NAV|SELECT|TBODY|TR|svg)$/i.test(el.tagName)) continue;
+      var one = 0, words = 0;
+      for (var j = 0; j < ch.length; j++) { var t = (ch[j].textContent || '').trim(); if (!ch[j].children.length && t.length <= 1) one++; else if (t && !/\s/.test(t) && t.length <= 16) words++; }
+      var letters = one / ch.length > 0.7, wsplit = !letters && words / ch.length > 0.8 && /^(H1|H2|H3|P|SPAN|DIV)$/.test(el.tagName) && (el.textContent || '').trim().split(/\s+/).length >= 3;
+      if (!letters && !wsplit) continue;
+      var a = getComputedStyle(ch[0]), b = getComputedStyle(ch[Math.min(2, ch.length - 1)]);
+      var d0 = parseFloat(a.animationDelay) || parseFloat(a.transitionDelay) || 0, d2 = parseFloat(b.animationDelay) || parseFloat(b.transitionDelay) || 0;
+      var step = Math.round((d2 - d0) * 1000 / Math.min(2, ch.length - 1)), js = /opacity|transform/.test(ch[0].getAttribute('style') || '');
+      var vars = /--(char-)?(index|i)\b/.test((ch[0].getAttribute('style') || '') + ' ' + (ch[1].getAttribute('style') || ''));
+      items.push({ kind: letters ? 'split-letters' : 'split-words', title: letters ? 'The heading arrives letter by letter' : 'The heading arrives word by word',
+        how: 'The ' + el.tagName.toLowerCase() + ' “' + (el.textContent || '').trim().slice(0, 30) + '” is split into ' + ch.length + (letters ? ' letter' : ' word') + ' pieces' + (step > 0 ? ', each ' + step + ' ms after the last' : '') + (js ? ' — moved by JavaScript' : vars ? ' — staggered with a CSS index variable' : ' — staggered in CSS'),
+        tech: js ? 'js' : 'css', step: step > 0 ? step : 35, letters: letters });
+      splits++;
+    }
+    // text that rewrites itself
+    TXT.filter(function (r) { return r.n >= 6 && r.el.isConnected && (r.el.textContent || '').trim(); }).sort(function (x, y) { return y.n - x.n; }).slice(0, 2).forEach(function (r) {
+      var grow = 0; for (var i = 1; i < r.lens.length; i++) if (r.lens[i] >= r.lens[i - 1]) grow++;
+      var typing = grow >= (r.lens.length - 1) * 0.8 && r.lens[r.lens.length - 1] > r.lens[0];
+      items.push({ kind: typing ? 'typewriter' : 'scramble', title: typing ? 'Text types itself out' : 'Text scrambles before it settles',
+        how: 'JavaScript rewrote “' + (r.el.textContent || '').trim().slice(0, 30) + '” ' + r.n + ' times while the page loaded', tech: 'js', tag: r.el.tagName.toLowerCase() });
+    });
+    // waiting to reveal on scroll
+    var hidden = 0;
+    for (var i = 0; i < N; i++) { var rr = all[i].getBoundingClientRect(); if (rr.top > innerHeight && rr.height > 20) { var c2 = getComputedStyle(all[i]); if (c2.opacity === '0' || (c2.transform !== 'none' && /^matrix\(1, 0, 0, 1, 0, [1-9]/.test(c2.transform))) hidden++; } }
+    var code = ''; Array.prototype.forEach.call(document.scripts, function (sc) { if (code.length < 4e6) code += (sc.src || '') + '\n' + (sc.textContent || '').slice(0, 2e6); });
+    var libs = [];
+    [['GSAP', /gsap|TweenMax|ScrollTrigger/], ['Framer Motion', /framer-motion|whileInView|AnimatePresence|useMotionValue/], ['Lenis smooth scroll', /lenis/i], ['AOS', /AOS\.init|data-aos/],
+     ['three.js', /THREE\.|WebGLRenderer/], ['Lottie', /lottie|bodymovin/i], ['Typed.js', /new Typed\(/], ['Splitting / SplitText', /Splitting\(|SplitText/], ['Swiper', /swiper/i], ['anime.js', /anime\(\{/]]
+      .forEach(function (l) { if (l[1].test(code) || (l[0] === 'AOS' && document.querySelector('[data-aos]'))) libs.push(l[0]); });
+    if (hidden >= 2 || /IntersectionObserver|whileInView|ScrollTrigger|data-aos/.test(code)) items.push({ kind: 'reveal', title: 'Things fade or slide in as you scroll', how: (hidden ? hidden + ' parts wait off-screen, hidden' : 'Watches the scroll position') + (/IntersectionObserver/.test(code) ? ' (IntersectionObserver)' : '') + (/ScrollTrigger/.test(code) ? ' (GSAP ScrollTrigger)' : ''), tech: 'js' });
+    if (document.querySelector('canvas') && document.querySelector('canvas').getBoundingClientRect().width > innerWidth * 0.5) items.push({ kind: 'canvas', title: 'An animated background is drawn live', how: 'A full-width <canvas>' + (/webgl/i.test(code) ? ' using WebGL' : ''), tech: 'js' });
+    if (/mousemove|pointermove/.test(code)) items.push({ kind: 'pointer', title: 'Things react to your mouse', how: 'Listens to pointer movement (tilt, follow or spotlight effects)', tech: 'js' });
+    if (hover.lift + hover.grow + hover.glow > 0) items.push({ kind: 'hover', title: hover.lift >= hover.grow ? 'Buttons and cards lift when you point at them' : 'Things grow when you point at them', how: (hover.lift + hover.grow) + ' hover rules move or scale things' + (hover.glow ? ', ' + hover.glow + ' add a glow or shadow' : '') + (hover.sel.length ? ' — e.g. ' + hover.sel.join(', ') : ''), tech: 'css' });
+    if (getComputedStyle(document.documentElement).scrollBehavior === 'smooth' || libs.indexOf('Lenis smooth scroll') >= 0) items.push({ kind: 'smooth', title: 'Scrolling glides', how: libs.indexOf('Lenis smooth scroll') >= 0 ? 'Lenis smooth-scroll library' : 'CSS scroll-behavior: smooth', tech: 'css' });
+    var ease = Object.keys(eases).sort(function (a, b) { return eases[b] - eases[a]; })[0] || null;
+    durs.sort(function (a, b) { return a - b; });
+    return { items: items, libs: libs, ease: ease, dur: durs.length ? Math.round(durs[durs.length >> 1]) : null, hover: hover.lift ? 'lift' : hover.grow ? 'grow' : hover.glow ? 'glow' : hover.color ? 'color' : null };
+  }
   function post(p) { if (sent) return; sent = true; p.__reskin = ID; try { parent.postMessage(p, '*'); } catch (e) {} }
   window.__reskinFail = function (msg) { post({ error: String(msg) }); };
   function collect() { try { post(measure()); } catch (e) { post({ error: 'Could not measure the page: ' + e.message }); } }
@@ -399,7 +504,8 @@ function __probe(ID, AUTO, MAX) {
         headLs: hs && hs.letterSpacing !== 'normal' ? +(parseFloat(hs.letterSpacing) / head.fs).toFixed(3) : 0,
         headCaps: hs ? hs.textTransform === 'uppercase' : false,
         bodyFont: bodyFont, side: areaTokens(side), topbar: areaTokens(topbar), bodyBg: bodyBg,
-        faces: faces.join('\n'), fontLinks: links
+        faces: faces.join('\n'), fontLinks: links,
+        motion: (function () { try { return readMotion(); } catch (e) { return { items: [], libs: [], error: e.message }; } })()
       }
     };
   }
@@ -542,14 +648,21 @@ function __shims(R) {
 // Mounts the component's default export (or first component export).
 function __rkMount(mod, onEmpty) {
   var R = window.React, root = document.getElementById('root');
-  var C = mod && mod['default'];
+  var C = mod && mod['default'], P = {}, M = window.__RK_MOUNT, wrap = false;
   if (typeof C !== 'function' && mod) { C = null; for (var k in mod) if (typeof mod[k] === 'function' && /^[A-Z]/.test(k)) { C = mod[k]; break; } }
+  // component settings: show the chosen component itself, with the chosen props, centred
+  if (M && mod) {
+    var pick = typeof mod[M.name] === 'function' ? mod[M.name] : mod['default'] && mod['default'].name === M.name ? mod['default'] : null;
+    if (pick) { C = pick; P = M.props || {}; wrap = true; }
+  }
   if (C && !root.children.length) {
     var EB = function (p) { R.Component.call(this, p); this.state = { e: null }; };
     EB.prototype = Object.create(R.Component.prototype);
     EB.getDerivedStateFromError = function (e) { window.__reskinErr = e && e.message; return { e: e }; };
     EB.prototype.render = function () { return this.state.e ? null : this.props.children; };
-    window.ReactDOM.createRoot(root).render(R.createElement(EB, null, R.createElement(C, {})));
+    var el = R.createElement(C, P);
+    if (wrap) el = R.createElement('div', { style: { minHeight: '100vh', display: 'grid', placeItems: 'center', padding: 24, boxSizing: 'border-box' } }, el);
+    window.ReactDOM.createRoot(root).render(R.createElement(EB, null, el));
   }
   setTimeout(function () {
     var empty = !root.innerHTML.trim() && !document.body.innerText.trim();
@@ -704,9 +817,11 @@ function __transplant(DATA) {
       if (!nodes.length) { el.appendChild(doc.createTextNode(t)); return; }
       var total = nodes.reduce(function (a, x) { return a + x.nodeValue.trim().length; }, 0), avg = total / nodes.length;
       if (nodes.length > 3 && avg <= 1.5) {                       // text split into letters (letter animations)
+        if (resplit(el, t, nodes, false)) return;
         var ch = Array.from(t);
         all.forEach(function (x, i) { x.nodeValue = i < all.length - 1 ? (ch[i] || '') : ch.slice(i).join(''); });
       } else if (nodes.length > 3 && avg <= 14 && (el.textContent.match(/\s+/g) || []).length >= nodes.length - 1) {   // text split into words (word animations)
+        if (resplit(el, t, nodes, true)) return;
         var words = t.split(/\s+/);
         nodes.forEach(function (x, i) {
           var lead = /^\s/.test(x.nodeValue) ? ' ' : '', trail = /\s$/.test(x.nodeValue) ? ' ' : '';
@@ -714,6 +829,78 @@ function __transplant(DATA) {
           x.nodeValue = w ? lead + w + trail : '';
         });
       } else nodes.forEach(function (x, i) { x.nodeValue = i === 0 ? (/^\s/.test(x.nodeValue) ? ' ' : '') + t : ''; });
+    }
+    // ---- motion-aware text: understand HOW the heading animates, then do the same with the user's words
+    var MOT = O.motion || { items: [] };
+    var motionOf = function (k) { return (MOT.items || []).filter(function (x) { return k.test(x.kind); })[0] || null; };
+    var rkCss = false;
+    function motionCss() {
+      if (rkCss) return; rkCss = true;
+      var st = doc.createElement('style');
+      st.textContent = '@keyframes rkIn{from{opacity:0;transform:translateY(.45em);filter:blur(4px)}}.rk-in{display:inline-block;animation:rkIn .7s cubic-bezier(.2,.7,.2,1) both}' +
+        '@keyframes rkCaret{50%{opacity:0}}.rk-caret{display:inline-block;width:.08em;height:.9em;margin-left:.06em;vertical-align:-.08em;background:currentColor;animation:rkCaret 1s steps(1) infinite}';
+      (doc.head || root).appendChild(st);
+    }
+    // the original stays in the page (hidden) so the design's own scripts keep a node to talk to; we show a copy
+    function stand(el) {
+      var copy = el.cloneNode(false); copy.removeAttribute('id');
+      el.style.setProperty('display', 'none', 'important'); el.setAttribute('data-rk-orig', '');
+      el.parentNode.insertBefore(copy, el.nextSibling); done.add(el); done.add(copy);
+      return copy;
+    }
+    function resplit(el, t, nodes, byWord) {
+      var pieces = nodes.map(function (n) { return n.parentNode; });
+      if (pieces.some(function (x) { return x === el || !el.contains(x); })) return false;
+      var tmpl = pieces[0], grp = !byWord && tmpl.parentNode !== el && pieces.every(function (x) { return x.parentNode.parentNode === el; }) ? tmpl.parentNode : null;
+      var c0 = S(pieces[0]), c2 = S(pieces[Math.min(2, pieces.length - 1)]), gap = Math.min(2, pieces.length - 1) || 1;
+      var a0 = parseFloat(c0.animationDelay) || 0, aStep = ((parseFloat(c2.animationDelay) || 0) - a0) / gap;
+      var t0 = parseFloat(c0.transitionDelay) || 0, tStep = ((parseFloat(c2.transitionDelay) || 0) - t0) / gap;
+      var jsMoved = /opacity|transform/.test(tmpl.getAttribute('style') || ''), animated = c0.animationName !== 'none' || aStep > 0 || tStep > 0;
+      var sp = motionOf(/^split-/), step = sp && sp.step ? sp.step : 35;
+      var vars = ['--i', '--index', '--char-index', '--word-index', '--char', '--delay'].filter(function (v) { return tmpl.style.getPropertyValue(v) !== ''; });
+      var flex = /flex|grid/.test(S(el).display);
+      var copy = stand(el), n = 0;
+      function piece(text) {
+        var x = tmpl.cloneNode(false); x.removeAttribute('id'); x.textContent = text;
+        var i = n++;
+        if (aStep > 0) x.style.animationDelay = (a0 + i * aStep).toFixed(3) + 's';
+        if (tStep > 0) x.style.transitionDelay = (t0 + i * tStep).toFixed(3) + 's';
+        vars.forEach(function (v) { x.style.setProperty(v, v === '--delay' ? (i * step) + 'ms' : String(i)); });
+        if (jsMoved || !animated) {   // it was moved by JavaScript (or not at all): replay the arrival ourselves, same rhythm
+          x.style.opacity = ''; x.style.transform = ''; x.style.visibility = '';
+          motionCss(); x.classList.add('rk-in'); x.style.animationDelay = (i * step) + 'ms';
+        }
+        return x;
+      }
+      var space = function () { if (!flex) return doc.createTextNode(' '); var g = doc.createElement('span'); g.textContent = ' '; g.style.display = 'inline-block'; return g; };
+      var words = String(t).split(/\s+/).filter(Boolean);
+      words.forEach(function (w, wi) {
+        if (byWord) copy.appendChild(piece(w));
+        else if (grp) { var g = grp.cloneNode(false); g.removeAttribute('id'); Array.from(w).forEach(function (c) { g.appendChild(piece(c)); }); copy.appendChild(g); }
+        else Array.from(w).forEach(function (c) { copy.appendChild(piece(c)); });
+        if (wi < words.length - 1) copy.appendChild(grp || byWord ? space() : piece(' '));
+      });
+      return true;
+    }
+    // text the design's JavaScript types or scrambles: show the user's words with the same effect
+    function liveTitle(el, t) {
+      var lv = motionOf(/^(typewriter|scramble)$/);
+      if (!lv || O.thumb) return false;
+      var copy = stand(el); copy.textContent = t;
+      motionCss();
+      if (lv.kind === 'typewriter') {
+        var i = 0, caret = doc.createElement('span'); caret.className = 'rk-caret';
+        copy.textContent = ''; var txt = doc.createTextNode(''); copy.appendChild(txt); copy.appendChild(caret);
+        (function type() { txt.nodeValue = t.slice(0, ++i); if (i < t.length) setTimeout(type, 38 + Math.random() * 40); })();
+      } else {
+        var glyphs = '!<>-_\\/[]{}=+*^?#ABCDEFGHJKLMNPQRSTUVWXYZ0123456789', frame = 0, total = 28;
+        (function scramble() {
+          var done = Math.floor(t.length * frame / total), out = t.slice(0, done);
+          for (var k = done; k < t.length; k++) out += t[k] === ' ' ? ' ' : glyphs[Math.floor(Math.random() * glyphs.length)];
+          copy.textContent = out; if (frame++ < total) setTimeout(scramble, 40); else copy.textContent = t;
+        })();
+      }
+      return true;
     }
     function unfreeze(el) {
       [el].concat(Array.prototype.slice.call(el.querySelectorAll('*'))).forEach(function (x) {
@@ -871,7 +1058,7 @@ function __transplant(DATA) {
     var btnTpl = null;   // an untouched copy of the target's main button, for sections that need one
     if (heroBox) { var hb0 = buttons(heroBox)[0]; if (hb0) { btnTpl = hb0.cloneNode(true); unfreeze(btnTpl); } }
     if (h1) {
-      setText(h1.el, C.hero.title);
+      if (!liveTitle(h1.el, C.hero.title)) setText(h1.el, C.hero.title);
       if (heroBox) {
         var eb = Array.prototype.slice.call(heroBox.querySelectorAll('span,p,div,small,a')).filter(function (el) {
           var t = own(el); return !doneUp(el) && !inside(el, zones) && before(el, h1.el) && !el.contains(h1.el) && t.length >= 2 && t.length <= 60 && !el.querySelector('h1,h2,h3,p') && vis(el);
@@ -1060,7 +1247,8 @@ function splitBundle(code) {
   }
   return { js, css };
 }
-function tsxDoc(code, id) {
+// mount (optional): { name, props } — show that component with those props (Studio's component settings)
+function tsxDoc(code, id, mount) {
   const bundle = splitBundle(code);
   code = bundle.js;
   const dark = /\bclassName=["'`][^"'`]*\bdark\b/.test(code) ? 'dark' : '';
@@ -1070,7 +1258,7 @@ function tsxDoc(code, id) {
 <script src="https://unpkg.com/@babel/standalone@7.26.4/babel.min.js"><\/script>
 </head><body><div id="root"></div>
 <script>(${__probe})(${jsonForScript(id)}, false, 6000);<\/script>
-<script>window.__CODE__=${jsonForScript(prepareTsx(code))};<\/script>
+<script>window.__CODE__=${jsonForScript(prepareTsx(code))};${mount ? `window.__RK_MOUNT=${jsonForScript(mount)};` : ''}<\/script>
 <script>${__shims}\n${__rkMount}\n${__runner}\n${__rkTransform}\n${__runner2}\n__runner2();<\/script></body></html>`;
 }
 const IMPORT_MAP = { imports: {
@@ -1098,7 +1286,8 @@ function liveDoc(m, s, opt) {
   const recolor = brand && from ? { from, to: brand, mono: !T.accent } : null;
   const ST = state.srcTokens;
   const font = s.myFont && ST ? { stack: ST.bodyFont, faces: ST.faces, links: ST.fontLinks } : null;
-  const data = { content: liveContent(m), opts: { thumb: !!opt.thumb, recolor, font } };
+  const motion = typeof state !== 'undefined' && state.tgt && state.tgt.tokens && state.tgt.tokens.motion || null;
+  const data = { content: liveContent(m), opts: { thumb: !!opt.thumb, recolor, font, motion } };
   const tag = `<script>(${__transplant})(${jsonForScript(data)});<\/script>`;
   const html = t.liveBase, i = html.toLowerCase().lastIndexOf('</body>');
   return i >= 0 ? html.slice(0, i) + tag + html.slice(i) : html + tag;

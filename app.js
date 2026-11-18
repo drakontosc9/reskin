@@ -230,8 +230,8 @@ async function generate() {
     state.styles = batch(12, state.mood, true);
     state.varOf = null;
     $('results').hidden = false;
-    setView('all');
-    $('results').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    setView('studio');   // Studio is the stage: your page + a filmstrip of these styles
+    
   } catch (e) {
     console.error(e);
     toast(e.message || 'Something went wrong', 4000);
@@ -355,7 +355,7 @@ function showVariations(s) {
   const v = variations(s); if (!v) return;
   state.varOf = s;
   state.styles = [s, ...v];
-  if (state.view !== 'all') setView('all'); else renderGrid();
+  setView('studio');
   $('results').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 function toggleSave(s) {
@@ -445,7 +445,7 @@ function renderAdvanced() {
       <div class="pool-grid">${imgs.map((im, i) => `<div class="pimg ${used.has(im.src) ? 'used' : ''} ${state.pickIdx === i ? 'sel' : ''}" draggable="true" data-i="${i}" title="${esc(im.alt || im.src.slice(0, 80))}"><img src="${esc(resolveSrc(im.src))}" alt="" onerror="this.parentNode.classList.add('broken')"></div>`).join('')}</div>
       <div class="addimg" id="addImg">+ Add your own images<br><small>drop files here or click</small></div>
       <input type="file" id="imgFile" accept="image/*" multiple hidden></div>
-    <div class="panel slots ${state.pickIdx != null ? 'pickmode' : ''}" id="slots"><h3>Where images go</h3><p>${state.pickIdx != null ? 'Now click a slot to place the selected image.' : 'Every style in Explore uses these choices.'}</p>${slots}
+    <div class="panel slots ${state.pickIdx != null ? 'pickmode' : ''}" id="slots"><h3>Where images go</h3><p>${state.pickIdx != null ? 'Now click a slot to place the selected image.' : 'Your page and every style use these choices.'}</p>${slots}
       <div style="margin-top:18px"><button class="ghost" id="advReset">Reset to detected images</button></div></div>
     <div class="panel advprev"><div class="advbar">Preview <select id="advStyle">${options.map(s => `<option value="${s.id}" ${s.id === state.advStyle ? 'selected' : ''}>${esc(s.name)} — ${esc(s.label)}</option>`).join('')}</select></div><div class="advframe" id="advFrame"></div></div>`;
 
@@ -499,7 +499,7 @@ function assignSlotQuiet(key, im) { const r = renderAdvanced; renderAdvanced = (
 function renderAdvancedLight() {
   $('adv').querySelectorAll('.pimg').forEach(el => el.classList.toggle('sel', +el.dataset.i === state.pickIdx));
   $('slots').classList.toggle('pickmode', state.pickIdx != null);
-  $('slots').querySelector('p').textContent = state.pickIdx != null ? 'Now click a slot to place the selected image.' : 'Every style in Explore uses these choices.';
+  $('slots').querySelector('p').textContent = state.pickIdx != null ? 'Now click a slot to place the selected image.' : 'Your page and every style use these choices.';
 }
 function renderAdvPreview() {
   const box = $('advFrame'); if (!box) return;
@@ -601,7 +601,38 @@ function addComps(items) {
   renderComps();
   toast(items.length > 1 ? `Saved ${items.length} components to “${coll}”` : `Saved “${items[0].name}” to “${coll}”`);
 }
-const compDoc = c => c.kind === 'tsx' ? tsxDoc(c.code, 'comp') : c.code;
+// extra: props for this one placement (Studio), on top of the component's own settings (Library)
+const compDoc = (c, extra) => c.kind === 'tsx' ? tsxDoc(c.code, 'comp', typeof mountFor === 'function' ? mountFor(c, extra) : null) : reviveSaved(c.code);
+// Page-saving extensions (SavePage WE) switch every script off when they save: type="text/plain".
+// Scripts that were saved *inside* the file are turned back on; ones that lived on the original site can't load
+// from here (the browser blocks them), and analytics are left off.
+function reviveSaved(html) {
+  if (!/data-savepage-type/.test(html)) return html;
+  return html.replace(/<script\b([^>]*)>/gi, (m, attrs) => {
+    if (!/data-savepage-type/.test(attrs) || /data-savepage-src/.test(attrs)) return m;
+    const t = (/data-savepage-type="([^"]*)"/.exec(attrs) || [])[1] || '';
+    if (/json/.test(t)) return m;
+    return '<script' + attrs.replace(/\s*type="text\/plain"/, '').replace(/\s*data-savepage-type="[^"]*"/, '') + (t ? ` type="${t}"` : '') + '>';
+  });
+}
+// a saved page whose app code didn't come with it: it looks right but nothing reacts
+function frozenInfo(c) {
+  if (c.kind === 'tsx' || c.icon) return null;
+  if (c.frozenV === 2) return c.frozen || null;
+  const html = String(c.code || ''), from = (/<meta name="savepage-url" content="([^"]+)"/.exec(html) || [])[1] || (/saved from url=\(\d+\)(\S+)/.exec(html) || [])[1] || null;
+  let lost = 0, kept = 0;
+  html.replace(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi, (m, attrs, body) => {
+    if (/json|text\/plain(?![\s\S]*data-savepage-type)/.test(attrs) && !/data-savepage/.test(attrs)) return m;
+    if (/data-savepage-src/.test(attrs) && /type="module"|data-savepage-type="module"/.test(attrs)) lost++;
+    else if (/data-savepage-src/.test(attrs)) { if (!/gtag|analytics|insights|beacon|center-stage/.test(attrs)) lost++; }
+    else if (body.trim().length > 200 || /\ssrc="(data:|blob:)/.test(attrs)) kept++;
+    return m;
+  });
+  const appRoot = /<div[^>]+id="(root|__next|app|__nuxt)"/.test(html);
+  c.frozen = lost && (!kept || appRoot) ? { from, why: 'Its app code stayed on ' + (from ? new URL(from).hostname : 'the original site') + ' when it was saved.' } : null;
+  c.frozenV = 2;
+  return c.frozen;
+}
 // thumbnails: same page, centred so small pieces (a button, a card) fill the tile
 const compThumbDoc = c => {
   const center = c.kind === 'tsx' ? 'html,body{min-height:100%}body{margin:0}#root{min-height:100vh;display:grid;place-items:center;padding:24px;box-sizing:border-box}' : '';
@@ -721,7 +752,7 @@ async function switchToTarget() {
     state.mood = 'target'; renderChips();
     state.styles = batch(12, 'target', true); state.varOf = null;
     $('results').hidden = false;
-    setView('all');
+    setView('studio');
     $('results').scrollIntoView({ behavior: 'smooth', block: 'start' });
   } catch (e) { toast(e.message, 5000); } finally { busy(null); }
 }
@@ -797,7 +828,7 @@ async function useTargetFiles(files) {
   setTarget({ name: main.name, text, kind: detectKind(text, main.name), assets, tokens: null });
   if (state.model) { // already generated once: sample right away and switch to it
     busy('Sampling the design…');
-    try { await loadTarget(); await measureSource(); if (state.tgt.tokens) { state.mood = 'target'; renderChips(); state.styles = batch(12, 'target', true); state.varOf = null; setView('all'); } else toast(state.tgt.error, 4000); }
+    try { await loadTarget(); await measureSource(); if (state.tgt.tokens) { state.mood = 'target'; renderChips(); state.styles = batch(12, 'target', true); state.varOf = null; setView('studio'); } else toast(state.tgt.error, 4000); }
     finally { busy(null); }
   }
 }

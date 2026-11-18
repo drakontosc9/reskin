@@ -90,7 +90,7 @@ const heightReporter = id => `<script>(function(){var id=${jsonForScript(id)},la
 
 // one component, filled and coloured for a spot on the site
 function compBlockDoc(comp, opts) {
-  let html = compDoc(comp);
+  let html = compDoc(comp, opts.props);
   if (opts.fill !== 'own' && opts.content) {
     const from = comp.tokens && (comp.tokens.accent || comp.tokens.btnBg);
     const to = opts.recolor ? brandColor() : null;
@@ -140,7 +140,9 @@ function composeDoc({ edit = false, rules = true, preview = false, studio = null
     if (b.kind === 'site') return { id: b.id, ref: b.ref, attrs };
     const c = compById(b.compId);
     if (!c) return { id: b.id, html: '', attrs };
-    const doc = compBlockDoc(c, { fill: b.fill, content: b.content, recolor: b.recolor, reportHeight: b.id });
+    let doc = compBlockDoc(c, { fill: b.fill, content: b.content, recolor: b.recolor, reportHeight: b.id, props: b.props });
+    // Studio's "Edit in detail" reaches inside added components too: pick parts, apply text / style / hide edits
+    if (typeof __rkElem === 'function') doc = injectEnd(doc, `<script>(${__rkElem})(${jsonForScript({ id: b.id, mode: 'fit', act: false, links: [], inner: b.inner || [] })});<\/script>`);
     return { id: b.id, attrs, html: `<iframe class="rk-comp" data-rk="${esc(b.id)}" title="${esc(c.name)}" sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox" loading="lazy" srcdoc="${esc(doc)}" style="display:block;width:100%;height:420px;border:0;background:transparent"></iframe>` };
   });
   return renderSite(m, style, {
@@ -191,7 +193,7 @@ function __rkRuntime(EDIT, RULES) {
 addEventListener('message', e => {
   const d = e.data || {};
   const pv = $('bdFrame') && $('bdFrame').querySelector('iframe');
-  if (d.rkSelect && state.view === 'build' && pv && e.source === pv.contentWindow) { selectBlock(d.rkSelect, false); }
+  if (d.rkSelect && (state.view === 'build' || (state.view === 'studio' && S.mode === 'blocks')) && pv && e.source === pv.contentWindow) { selectBlock(d.rkSelect, false); }
 });
 
 /* ------------------------------------------------------------------ Build tab */
@@ -272,12 +274,14 @@ function renderBlockList() {
     <div class="blk ${B.sel === b.id ? 'on' : ''} ${b.hidden ? 'off' : ''}" draggable="true" data-id="${b.id}">
       <span class="grip" title="Drag to move">⋮⋮</span>
       <div class="bl"><span class="kind">${b.kind === 'comp' ? esc((compById(b.compId) || {}).source || 'component') : b.ref === 'hero' ? 'your hero' : 'your section'}</span><b>${esc(b.label)}</b><div class="bx-row">${badgesFor(b)}</div></div>
-      <div class="acts"><button data-up title="Move up" ${i === 0 ? 'disabled' : ''}>▲</button><button data-down title="Move down" ${i === p.blocks.length - 1 ? 'disabled' : ''}>▼</button></div>
+      <div class="acts"><button data-up title="Move up" ${i === 0 ? 'disabled' : ''}>▲</button><button data-down title="Move down" ${i === p.blocks.length - 1 ? 'disabled' : ''}>▼</button>${b.kind === 'comp' ? '<button data-del title="Remove this component" class="del">✕</button>' : ''}</div>
     </div>`).join('');
   let dragId = null;
   list.querySelectorAll('.blk').forEach(el => {
     const id = el.dataset.id;
-    el.onclick = e => { if (e.target.closest('[data-up],[data-down]')) return; selectBlock(id, true); };
+    el.onclick = e => { if (e.target.closest('[data-up],[data-down],[data-del]')) return; selectBlock(id, true); };
+    const del = el.querySelector('[data-del]');
+    if (del) del.onclick = e => { e.stopPropagation(); if (typeof removeBlock === 'function') removeBlock(id); };
     el.querySelector('[data-up]').onclick = () => moveBlock(id, -1);
     el.querySelector('[data-down]').onclick = () => moveBlock(id, 1);
     el.addEventListener('dragstart', e => { dragId = id; el.classList.add('drag'); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', 'blk:' + id); });
@@ -382,7 +386,7 @@ function startWizard(o) {
     content: o.replaces ? contentFromRef(o.replaces) : { title: 'Your heading here', text: 'A sentence or two about this part of your site.', button: '', link: '#', cards: [] },
     recolor: o.recolor != null ? o.recolor : !!brandColor(), rules: DEFAULT_RULES(),
   };
-  if (state.view !== 'build') { setView('build'); return; }
+  if (!(state.view === 'studio' && S.mode === 'blocks')) { S.mode = 'blocks'; setView('studio'); return; }   // the block editor lives in Studio now
   renderSide();
   $('bdSide').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
@@ -392,7 +396,7 @@ function renderWizard() {
   const titles = { 1: 'Pick a component', 2: 'What’s it replacing?', 3: 'What should it say?', 4: 'When does it show?' };
   let body = '';
   if (w.step === 1) {
-    body = comps.list.length ? `<p class="help">Choose from your saved components. Save more in the <b>Components</b> tab.</p>
+    body = comps.list.length ? `<p class="help">Choose from your saved components. Save more in the <b>Library</b>.</p>
       <div class="pick">${comps.list.map(c => `<button data-pick="${c.id}" class="${w.compId === c.id ? 'on' : ''}"><div class="th" data-th="${c.id}"></div><span class="nm">${esc(c.name)}</span></button>`).join('')}</div>`
       : `<div class="bx-empty">You haven't saved any components yet.<br><br><button class="primary" id="wzGoComps">Find components</button></div>`;
   } else if (w.step === 2) {
@@ -503,7 +507,7 @@ function finishWizard() {
 /* ------------------------------------------------------------------ Component tab */
 function renderCompView() {
   const box = $('compView');
-  if (!comps.list.length) { box.innerHTML = `<div class="bx-panel bx-empty">No components yet — save some in the <b>Components</b> tab first.<br><br><button class="primary" id="cvGo">Find components</button></div>`; $('cvGo').onclick = () => setView('components'); return; }
+  if (!comps.list.length) { box.innerHTML = `<div class="bx-panel bx-empty">No components yet — save some in the <b>Library</b> first.<br><br><button class="primary" id="cvGo">Find components</button></div>`; $('cvGo').onclick = () => setView('components'); return; }
   if (!compById(B.compSel)) B.compSel = comps.list[0].id;
   const c = compById(B.compSel);
   box.innerHTML = `<div class="cv">

@@ -13,7 +13,7 @@
 .bx-badge.acc{background:#ffe7e0;color:#b2341a}
 .bx-badge.blue{background:#e6efff;color:#1f4fbf}
 .bx-frame{position:relative;background:#d9d5ce;border-radius:0 0 14px 14px;display:flex;justify-content:center;overflow:hidden}
-.bx-frame iframe{border:0;background:#fff;width:100%;height:100%;display:block}
+.bx-frame iframe{border:0;background:var(--panel);width:100%;height:100%;display:block}
 .bx-frame.mobile iframe{width:390px;border-radius:20px;margin:14px 0;box-shadow:0 18px 40px rgba(0,0,0,.25);height:calc(100% - 28px)}
 
 /* ---------- Component page ---------- */
@@ -22,7 +22,7 @@
 .cv-item{display:flex;gap:10px;align-items:center;width:100%;border:0;background:none;text-align:left;padding:9px 12px;border-top:1px solid var(--line);font-size:13.5px;color:var(--ink)}
 .cv-item:first-of-type{border-top:0}
 .cv-item:hover{background:var(--bg)}
-.cv-item.on{background:#fff4f0;box-shadow:inset 3px 0 0 var(--accent)}
+.cv-item.on{background:var(--accent-soft);box-shadow:inset 3px 0 0 var(--accent)}
 .cv-item span{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .cv-item small{color:var(--muted);font-size:11px}
 .cv-main .bx-frame{height:520px}
@@ -37,14 +37,14 @@
 /* ---------- Build tab ---------- */
 .bd-top{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px}
 .bd-top input.name{font:600 16px Inter,sans-serif;border:1px solid transparent;border-radius:8px;padding:6px 10px;background:transparent;min-width:180px}
-.bd-top input.name:hover,.bd-top input.name:focus{border-color:var(--line);background:#fff;outline:none}
-.bd-top select{font:inherit;font-size:13px;border:1px solid var(--line);border-radius:8px;padding:6px 8px;background:#fff;max-width:260px}
+.bd-top input.name:hover,.bd-top input.name:focus{border-color:var(--line);background:var(--panel);outline:none}
+.bd-top select{font:inherit;font-size:13px;border:1px solid var(--line);border-radius:8px;padding:6px 8px;background:var(--panel);max-width:260px}
 .bd-top .sp{flex:1}
 .bd{display:grid;grid-template-columns:270px minmax(0,1fr) 330px;gap:14px;align-items:start}
 .bd-blocks,.bd-side{position:sticky;top:12px;max-height:calc(100vh - 24px);overflow:auto}
-.blk{display:flex;align-items:flex-start;gap:8px;padding:10px 10px 10px 6px;border-top:1px solid var(--line);background:#fff;cursor:pointer;transition:background .12s}
+.blk{display:flex;align-items:flex-start;gap:8px;padding:10px 10px 10px 6px;border-top:1px solid var(--line);background:var(--panel);cursor:pointer;transition:background .12s}
 .blk:hover{background:#fcfbf9}
-.blk.on{background:#fff4f0;box-shadow:inset 3px 0 0 var(--accent)}
+.blk.on{background:var(--accent-soft);box-shadow:inset 3px 0 0 var(--accent)}
 .blk.drag{opacity:.4}
 .blk.over-top{box-shadow:inset 0 3px 0 var(--accent)}
 .blk.over-bot{box-shadow:inset 0 -3px 0 var(--accent)}
@@ -58,7 +58,7 @@
 .blk .acts button{border:0;background:none;color:var(--muted);width:22px;height:20px;border-radius:5px;font-size:12px;padding:0}
 .blk .acts button:hover{background:var(--bg);color:var(--ink)}
 .bd-add{display:block;width:calc(100% - 20px);margin:10px;border:2px dashed #d9d3c9;background:none;border-radius:10px;padding:12px;color:var(--muted);font-weight:600;font-size:13.5px}
-.bd-add:hover{border-color:var(--accent);color:var(--accent);background:#fff7f4}
+.bd-add:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}
 .bd-fixed{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;font-size:12.5px;color:var(--muted);background:#fcfbf9}
 .bd-fixed label{display:flex;align-items:center;gap:6px}
 .bd-preview .bx-frame{height:calc(100vh - 150px);min-height:520px}
@@ -69,21 +69,21 @@
 .wz-steps i.on{background:var(--accent)}
 .wz h4{margin:14px 0 4px;font-size:16px}
 .wz p.help{margin:0 0 12px;color:var(--muted);font-size:13px}
-.wz .opt{display:flex;gap:10px;align-items:flex-start;border:1.5px solid var(--line);border-radius:12px;padding:10px 12px;margin-bottom:8px;cursor:pointer;background:#fff}
+.wz .opt{display:flex;gap:10px;align-items:flex-start;border:1.5px solid var(--line);border-radius:12px;padding:10px 12px;margin-bottom:8px;cursor:pointer;background:var(--panel)}
 .wz .opt:hover{border-color:#cfc9bf}
-.wz .opt.on{border-color:var(--accent);background:#fff7f4}
+.wz .opt.on{border-color:var(--accent);background:var(--accent-soft)}
 .wz .opt input[type=radio]{margin-top:3px;accent-color:var(--accent)}
 .wz .opt b{display:block;font-size:13.5px}
 .wz .opt span{font-size:12.5px;color:var(--muted)}
-.wz .opt select,.wz .opt input[type=number],.wz .opt input[type=date]{margin-top:6px;font:inherit;font-size:13px;border:1px solid var(--line);border-radius:8px;padding:5px 8px;background:#fff;max-width:100%}
+.wz .opt select,.wz .opt input[type=number],.wz .opt input[type=date]{margin-top:6px;font:inherit;font-size:13px;border:1px solid var(--line);border-radius:8px;padding:5px 8px;background:var(--panel);max-width:100%}
 .wz .opt input[type=number]{width:70px}
 .wz .field{display:grid;gap:4px;margin-bottom:10px;font-size:12.5px;color:var(--muted)}
-.wz .field input,.wz .field textarea{font:inherit;font-size:14px;color:var(--ink);border:1px solid var(--line);border-radius:9px;padding:8px 10px;background:#fff}
+.wz .field input,.wz .field textarea{font:inherit;font-size:14px;color:var(--ink);border:1px solid var(--line);border-radius:9px;padding:8px 10px;background:var(--panel)}
 .wz .field textarea{min-height:70px;resize:vertical}
 .wz .check{display:flex;gap:8px;align-items:center;font-size:13.5px;margin:10px 0}
 .wz .check input{accent-color:var(--accent)}
 .wz .pick{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;max-height:330px;overflow:auto}
-.wz .pick button{border:1.5px solid var(--line);background:#fff;border-radius:10px;padding:0;overflow:hidden;text-align:left}
+.wz .pick button{border:1.5px solid var(--line);background:var(--panel);border-radius:10px;padding:0;overflow:hidden;text-align:left}
 .wz .pick button.on{border-color:var(--accent);box-shadow:0 0 0 3px rgba(255,91,55,.15)}
 .wz .pick .th{position:relative;aspect-ratio:3/2;overflow:hidden;background:#eee}
 .wz .pick .th iframe{position:absolute;top:0;left:0;width:600px;height:400px;border:0;transform-origin:0 0;pointer-events:none}
