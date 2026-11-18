@@ -700,7 +700,7 @@ function __rkTransform(code) {
   var modUrl = function (s) { return URL.createObjectURL(new Blob([s], { type: 'text/javascript' })); };
   var npm = function (spec) {
     var m = /^((?:@[^/]+\/)?[^/@]+)(@[^/]+)?(\/.*)?$/.exec(spec); if (!m) return 'https://esm.sh/' + spec + DEPS;
-    return 'https://esm.sh/' + (m[2] ? m[1] + m[2] : PIN[m[1]] || m[1]) + (m[3] || '') + DEPS;
+    return 'https://esm.sh/' + (m[2] ? m[1] + m[2] : PIN[m[1]] || (window.__RK_PINS || {})[m[1]] || m[1]) + (m[3] || '') + DEPS;
   };
   var shim = function (spec, names) {
     var ui = /(^|\/)components\/ui\/([\w-]+)$/.exec(spec), kind = ui && ui[2];
@@ -1258,8 +1258,24 @@ function tsxDoc(code, id, mount) {
 <script src="https://unpkg.com/@babel/standalone@7.26.4/babel.min.js"><\/script>
 </head><body><div id="root"></div>
 <script>(${__probe})(${jsonForScript(id)}, false, 6000);<\/script>
-<script>window.__CODE__=${jsonForScript(prepareTsx(code))};${mount ? `window.__RK_MOUNT=${jsonForScript(mount)};` : ''}<\/script>
+<script>window.__CODE__=${jsonForScript(prepareTsx(code))};${mount ? `window.__RK_MOUNT=${jsonForScript(mount)};` : ''}${EXPORT_PINS ? `window.__RK_PINS=${jsonForScript(EXPORT_PINS)};` : ''}<\/script>
 <script>${__shims}\n${__rkMount}\n${__runner}\n${__rkTransform}\n${__runner2}\n__runner2();<\/script></body></html>`;
+}
+// set while building a download: package versions fixed at that moment, so the downloaded site keeps working the same way
+let EXPORT_PINS = null;
+// every package a component imports without a version → "name@version" (today's latest, from the npm registry)
+async function pinPackages(codes) {
+  const names = new Set();
+  codes.forEach(code => { for (const m of code.matchAll(/(?:^|\n)\s*import\s[^'"]*?['"]([^'"]+)['"]|import\(\s*['"]([^'"]+)['"]\s*\)/g)) {
+    const spec = m[1] || m[2]; if (!spec || /^(\.|\/|~\/|@\/|#|src\/|https?:|next(\/|$)|react(-dom)?(\/|$))/.test(spec) || /\.(css|scss|sass|less)$/.test(spec)) continue;
+    const n = /^((?:@[^/]+\/)?[^/@]+)(@[^/]+)?/.exec(spec); if (n && !n[2]) names.add(n[1]);
+  } });
+  const pins = {}, missed = [];
+  await Promise.all([...names].map(async n => {
+    try { const r = await fetch('https://registry.npmjs.org/' + n.replace('/', '%2F') + '/latest'); const j = await r.json(); if (j.version) pins[n] = n + '@' + j.version; else missed.push(n); }
+    catch { missed.push(n); }
+  }));
+  return { pins, missed };
 }
 const IMPORT_MAP = { imports: {
   'react': 'https://esm.sh/react@18.3.1', 'react/': 'https://esm.sh/react@18.3.1/',

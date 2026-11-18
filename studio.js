@@ -56,6 +56,7 @@ function __rkElem(D) {
       var el = all[i]; if (/^(SCRIPT|STYLE|LINK|META|TEMPLATE|NOSCRIPT|BR)$/.test(el.tagName)) continue;
       var r = el.getBoundingClientRect(); if (r.width < 1 || r.height < 1) continue;
       if (r.width >= vw * 0.97 && r.height >= vh * 0.9) { BG = opaque(el) || BG; stage.push(el); continue; }   // a full-screen wrapper: its colour is the backdrop
+      if (r.width >= vw * 0.97 && bare(el)) continue;   // a full-width layout wrapper (React's #root, a flex row) isn't content either
       x0 = Math.min(x0, r.left); y0 = Math.min(y0, r.top); x1 = Math.max(x1, r.right); y1 = Math.max(y1, r.bottom);
     }
     if (x1 <= x0) return null;
@@ -72,6 +73,14 @@ function __rkElem(D) {
     if (!el) return null; var c = getComputedStyle(el), m = /rgba?\(([^)]+)\)/.exec(c.backgroundColor);
     if (c.backgroundImage && c.backgroundImage !== 'none') return c.backgroundImage.indexOf('gradient') >= 0 ? c.backgroundImage : null;
     if (!m) return null; var a = m[1].split(','); return a.length < 4 || +a[3] > 0.5 ? c.backgroundColor : null;
+  }
+  // nothing of its own to see: no colour, border, shadow, words or media — only holds other things
+  function bare(el) {
+    if (/^(IMG|SVG|CANVAS|VIDEO|INPUT|BUTTON|TEXTAREA|SELECT|IFRAME|HR)$/i.test(el.tagName) || opaque(el)) return false;
+    var c = getComputedStyle(el);
+    if (parseFloat(c.borderTopWidth) || parseFloat(c.borderBottomWidth) || (c.boxShadow && c.boxShadow !== 'none')) return false;
+    for (var n = el.firstChild; n; n = n.nextSibling) if (n.nodeType === 3 && n.nodeValue.trim()) return false;
+    return true;
   }
   var last = '';
   function report() {
@@ -171,7 +180,7 @@ function __rkElem(D) {
       var el2 = resolve(LINKS[i]);
       if (el2 && el2.contains(e.target)) {
         if (e.target.closest('a[href]')) e.preventDefault();   // the part keeps its own effect, but doesn't navigate the frame
-        parent.postMessage({ rkAct: D.id, link: i }, '*'); return;
+        e.stopImmediatePropagation(); parent.postMessage({ rkAct: D.id, link: i }, '*'); return;   // only this link, not the whole component's action too
       }
     }
   }, true);
@@ -181,7 +190,19 @@ function __rkElem(D) {
     if (!t && D.mode === 'fit') return;
     e.preventDefault(); parent.postMessage({ rkAct: D.id }, '*');
   }, true);
-  document.addEventListener('contextmenu', function (e) { if (WORDS) return; e.preventDefault(); parent.postMessage({ rkElCtx: D.id, x: e.clientX, y: e.clientY }, '*'); }, true);
+  function controlAt(t) {   // the button or link under the pointer, if any
+    var el = partOf(t); if (!el || el === document.body) return null;
+    var ctl = el.matches('button,a,[role=button],[role=menuitem],[role=tab],summary,input[type=submit],input[type=button]') || getComputedStyle(el).cursor === 'pointer';
+    return ctl ? { path: pathOf(el), label: labelOf(el) } : null;
+  }
+  document.addEventListener('contextmenu', function (e) { if (WORDS) return; e.preventDefault(); parent.postMessage({ rkElCtx: D.id, x: e.clientX, y: e.clientY, part: controlAt(e.target) }, '*'); }, true);
+  // the component's own links: "#" goes nowhere; a real address opens on the page, not inside this little frame
+  document.addEventListener('click', function (e) {
+    if (PICK || WORDS || e.defaultPrevented) return;
+    var a = e.target.closest && e.target.closest('a[href]'); if (!a) return;
+    var h = a.getAttribute('href') || ''; e.preventDefault();
+    if (h && h.charAt(0) !== '#' && !/^javascript:/i.test(h)) parent.postMessage({ rkGo: a.href, newTab: a.target === '_blank' }, '*');
+  });
   var WORDS = false, wEl = null, wWas = '';
   var wst = document.createElement('style');
   wst.textContent = '[data-rk-w]{outline:2px dashed #2f6bff!important;outline-offset:2px;cursor:text!important}[contenteditable=true][data-rk-wed]{outline:2px solid #2f6bff!important;outline-offset:2px}';
@@ -470,12 +491,13 @@ function __rkStudio(EDITS, MODE) {
   addEventListener('message', function (ev) {
     var d = ev.data || {};
     if (d.rkE) onReport(d);
+    if (d.rkGo && MODE !== 'edit' && MODE !== 'show') { if (d.newTab || MODE === 'try') window.open(d.rkGo, '_blank', 'noopener'); else location.href = d.rkGo; }
     if (d.rkElCtx || d.rkElWords || d.rkElWordsEnd) {
       var id = d.rkElCtx || d.rkElWords || d.rkElWordsEnd, k = F[id]; if (!k) return;
       if (d.rkElWords) return parent.postMessage({ rkInnerWords: { editId: id, item: d.item } }, '*');
       if (d.rkElWordsEnd) { (k.tile || k.wrap).classList.remove('rk-wording'); return; }
       var r = k.f.getBoundingClientRect(), sc = r.width / (k.f.offsetWidth || r.width);
-      parent.postMessage({ rkCtx: { addr: null, info: null, editId: id }, x: r.left + d.x * sc, y: r.top + d.y * sc }, '*');
+      parent.postMessage({ rkCtx: { addr: null, info: null, editId: id, part: d.part || null }, x: r.left + d.x * sc, y: r.top + d.y * sc }, '*');
     }
     if (d.rkWordsIn) {   // "Change its words": that component's words become clickable; everything else stays put
       Object.keys(F).forEach(function (id) { var k = F[id], on = id === d.rkWordsIn; if (k.f.contentWindow) k.f.contentWindow.postMessage({ rkWords: on }, '*'); (k.tile || k.wrap).classList.toggle('rk-wording', on); });
@@ -769,11 +791,21 @@ function wireStToolbar() {
     $('modal').hidden = false; document.body.style.overflow = 'hidden';
     setModalDoc(composeDoc({ preview: true }), { live: true });
   };
-  $('stDl').onclick = () => {
+  $('stDl').onclick = async () => {
+    // components that run code fetch their packages when the page opens: fix today's versions so it keeps working the same
+    const used = [...new Set([...(p.edits || []).map(e => e.compId), ...p.blocks.filter(b => b.kind === 'comp').map(b => b.compId)])].map(compById).filter(c => c && c.kind === 'tsx');
+    let note = '';
+    if (used.length) {
+      toast('Fixing package versions…', 2000);
+      const { pins, missed } = await pinPackages(used.map(c => c.code));
+      EXPORT_PINS = pins;
+      note = ` · its components load React and their packages from the internet when the page opens${missed.length ? ` (couldn’t fix the version of ${missed.join(', ')} — check you’re online)` : ', versions fixed'}`;
+    }
+    let html; try { html = composeDoc({ preview: false }); } finally { EXPORT_PINS = null; }
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([composeDoc({ preview: false })], { type: 'text/html' }));
+    a.href = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
     a.download = `${slug(p.name || 'site')}.html`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-    toast('Downloaded — this file is your whole site, with your changes');
+    toast('Downloaded — this file is your whole site, with your changes' + note, note ? 7000 : 3000);
   };
 }
 
@@ -1088,7 +1120,8 @@ addEventListener('message', e => {
   if (d.rkText) { saveTextEdit(d.rkText.addr, d.rkText.text, d.rkText.was); return; }
   if (d.rkCtx) {
     const fr = $('stFrame').querySelector('iframe').getBoundingClientRect();
-    const items = ctxItems(d.rkCtx); if (items.length) openCtx(fr.left + d.x, fr.top + d.y, items);
+    CTX_AT.x = fr.left + d.x; CTX_AT.y = fr.top + d.y;
+    const items = ctxItems(d.rkCtx); if (items.length) openCtx(CTX_AT.x, CTX_AT.y, items);
     return;
   }
 });
@@ -1116,11 +1149,42 @@ function saveTextEdit(addr, text, was) {
 function wordsEscape() {
   addEventListener('keydown', function off(ev) { if (ev.key !== 'Escape') return; removeEventListener('keydown', off, true); stPost({ rkWordsOff: true }); }, true);
 }
+const CTX_AT = { x: 0, y: 0 };
+// where a component's button can go: your page's sections, your site's own links, or any address
+function linkTargets(e, part) {
+  const links = e.links || (e.links = []), at = links.findIndex(l => l.path === part.path), cur = at >= 0 ? links[at] : null;
+  const set = (action, what) => {
+    const l = { path: part.path, label: part.label, action };
+    if (at >= 0) links[at] = l; else links.push(l);
+    saveProject(); renderStudioPreview(); toast(`“${part.label}” now goes to ${what}`);
+  };
+  const same = a => cur && JSON.stringify(cur.action) === JSON.stringify(a), mark = a => same(a) ? '✓' : '';
+  const items = [];
+  B.project.blocks.filter(b => !b.hidden).forEach(b => { const a = { type: 'section', block: b.id }; items.push({ label: b.label, icon: mark(a) || '↓', hint: 'section', run: () => set(a, `“${b.label}”`) }); });
+  const m = state.model, ext = [...(m.navCta ? [m.navCta] : []), ...(m.nav || []), ...(m.footerLinks || [])].filter((l, i, arr) => l && l.href && !/^#/.test(l.href) && arr.findIndex(x => x.href === l.href) === i).slice(0, 8);
+  if (ext.length) items.push('-');
+  ext.forEach(l => { const a = { type: 'link', href: l.href }; items.push({ label: l.text || l.href, icon: mark(a) || '↗', hint: 'your site', run: () => set(a, `“${l.text || l.href}”`) }); });
+  items.push('-');
+  items.push({ label: 'A web address…', icon: '🔗', run: () => {
+    const v = prompt('Where should it go? (a web address)', cur && cur.action.type === 'link' ? cur.action.href : 'https://');
+    if (!v || !v.trim() || v.trim() === 'https://') return;
+    const href = /^(https?:|mailto:|tel:|#|\/)/i.test(v.trim()) ? v.trim() : 'https://' + v.trim();
+    set({ type: 'link', href, newTab: !/^(#|\/)/.test(href) }, href);
+  } });
+  if (cur) items.push({ label: 'No link — just what it does', icon: '✕', run: () => { links.splice(at, 1); saveProject(); renderStudioPreview(); toast(`“${part.label}” isn’t linked any more`); } });
+  return items;
+}
 function ctxItems(t) {
   const edits = projectEdits(), items = [];
   if (t.editId) {
     const e = editById(t.editId), c = e && compById(e.compId), snap = snapshotPage();
     if (!c) return [{ label: 'Remove', icon: '✕', danger: true, run: () => { B.project.edits = edits.filter(x => x.id !== t.editId); saveProject(); renderEditorWs(); toastUndo('Removed', snap); } }];
+    // a button or link inside it: say where it goes
+    if (t.part) {
+      const l = (e.links || []).find(x => x.path === t.part.path);
+      items.push({ label: `Link “${t.part.label.slice(0, 24)}” to…`, icon: '↗', hint: l ? 'linked' : '', run: () => setTimeout(() => openCtx(CTX_AT.x, CTX_AT.y, linkTargets(e, t.part)), 0) });
+      items.push('-');
+    }
     // rework it, in place: its words, its colours; anything deeper lives on its Library page
     if (isClicky(e.target.kind)) items.push({ label: 'Change its words', icon: '✎', run: () => { const v = prompt('What should it say?', e.text || e.targetLabel || ''); if (v != null && v.trim()) { e.text = v.trim(); saveProject(); renderStudioPreview(); } } });
     else items.push({ label: 'Change its words', icon: '✎', hint: 'click the words, type', run: () => { stPost({ rkWordsIn: e.id }); toast('Click any words in it and type · Enter saves · Esc when done', 5000); wordsEscape(); } });
