@@ -17,7 +17,7 @@ VIEWS.library = () => renderLibrary();
     if (v === 'saved') { LIB.filter = 'styles'; LIB.detail = null; v = 'library'; }
     if (v === 'components') { LIB.filter = 'components'; LIB.detail = null; v = 'library'; }
     if (v === 'component') { LIB.detail = B.compSel || (comps.list[0] || {}).id || null; v = 'library'; }
-    if (v === 'build') { S.mode = 'blocks'; v = 'studio'; }
+    if (v === 'build') v = 'studio';
     if (v === 'advanced') { v = state.view === 'all' ? 'studio' : state.view; setTimeout(openGear, 0); }
     document.querySelector('.intro').hidden = v !== 'all';
     if (v !== 'library') restoreLibraryParts();
@@ -137,7 +137,7 @@ function libraryPatchComps() {
     const use = t.querySelector('[data-use]');
     if (use) { use.textContent = 'Apply its style…'; use.onclick = () => applyStyleDialog(c); }
     const put = document.createElement('button'); put.className = 'primary'; put.textContent = 'Put on my page';
-    put.onclick = () => { S.armed = c.id; S.mode = 'edit'; setView('studio'); toast(`Now click where “${c.name}” goes on your page`); };
+    put.onclick = () => { S.flash = c.id; setView('studio'); toast(`Drag “${c.name}” from the rail onto your page`, 4000); };   // it glows in the rail
     if (use) use.before(put);
   });
 }

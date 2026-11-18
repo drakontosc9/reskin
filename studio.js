@@ -9,25 +9,15 @@
    Needs engine.js, app.js, builder.js. */
 
 const S = {
-  ws: 'editor',        // (legacy) Studio is one stage now
   device: 'desktop',
-  tryIt: false,        // editor preview: run click actions instead of selecting
-  mode: 'edit',        // Studio stage: 'edit' (drop & click) · 'blocks' (the page as a list of parts) · 'links' (node view)
-  parts: { page: [], comps: {} },   // clickable parts reported by the preview, for the node view
-  wireFrom: null,      // node view: a "from" dot that was clicked, waiting for a "to" dot
-  focus: null,         // "Edit in detail": { scope, label, frame? } — one section (or component) on its own
   drag: null,          // component id being dragged from the rail
-  sel: null,           // { addr, info } or { editId } — what's selected in the preview
-  ask: null,           // the question flow (see startAsk)
-  picking: null,       // 'opener' while waiting for "click the button that opens it"
-  innerPick: null,     // edit id whose component is open for "click a part of it"
-  armed: null,         // component id picked by clicking (instead of dragging): the next click on the page places it
-};
-
-// bento tile sizes (columns × rows of the page's grid)
+  swapFor: null,       // { editId | blockId } waiting for "pick the component to swap in"
+  flash: null,         // component to highlight in the rail (e.g. from the Library)
+  matched: null,       // design already applied to the page on import
+  mode: 'edit',        // (kept for older code paths in builder.js / shell.js)
+}
 const TILE_SIZES = [['auto', 'Auto', 'Picks a size from the component’s shape'], ['s', 'Small', '1×1'], ['wide', 'Wide', '2×1'], ['tall', 'Tall', '1×2'], ['big', 'Big', '2×2'], ['band', 'Band', 'full width, 1 row'], ['full', 'Full width', 'full width, 2 rows']];
 const sizeName = v => (TILE_SIZES.find(x => x[0] === v) || TILE_SIZES[0])[1];
-const sizeChips = (cur, attr) => `<div class="st-sizes">${TILE_SIZES.map(([v, n, d]) => `<button type="button" ${attr}="${v}" class="${cur === v ? 'on' : ''}" title="${d}"><i class="sz-${v}"></i>${n}</button>`).join('')}</div>`;
 const KIND_NAMES = { button: 'button', link: 'link', heading: 'heading', text: 'text', image: 'image', card: 'card', section: 'section', node: 'part' };
 const isClicky = k => k === 'button' || k === 'link';
 const quote = s => `“${String(s || '').trim().slice(0, 40)}${String(s || '').trim().length > 40 ? '…' : ''}”`;
@@ -201,18 +191,6 @@ function __rkStudio(EDITS, MODE) {
     if (t.kind === 'node') { try { return t.path ? r.querySelector(':scope>' + t.path) : r; } catch (e) { return null; } }
     return r.querySelectorAll(KINDS[t.kind])[t.idx] || null;
   }
-  function pathFrom(r, el) {
-    var parts = [];
-    for (var x = el; x && x !== r; x = x.parentElement) { var i = 1, s = x; while ((s = s.previousElementSibling)) if (s.tagName === x.tagName) i++; parts.unshift(x.tagName.toLowerCase() + ':nth-of-type(' + i + ')'); }
-    return parts.join('>');
-  }
-  function snapEl(el) {
-    var cs = getComputedStyle(el), own = '';
-    for (var n = el.firstChild; n; n = n.nextSibling) if (n.nodeType === 3) own += n.nodeValue;
-    var bg = cs.backgroundColor; for (var x = el; x && (bg === 'rgba(0, 0, 0, 0)' || bg === 'transparent'); x = x.parentElement) bg = getComputedStyle(x).backgroundColor;
-    return { color: cs.color, bg: bg, fs: parseFloat(cs.fontSize), pad: parseFloat(cs.paddingTop), mt: parseFloat(cs.marginTop), mb: parseFloat(cs.marginBottom), radius: parseFloat(cs.borderTopLeftRadius), align: cs.textAlign,
-      text: own.trim() ? (el.innerText || el.textContent || '').trim().slice(0, 400) : null, tag: el.tagName.toLowerCase() };
-  }
   function scopeOf(el) {
     var b = el.closest('.rk-block'); if (b) return b.getAttribute('data-block');
     if (el.closest('header.nav,aside.side')) return 'nav';
@@ -222,24 +200,10 @@ function __rkStudio(EDITS, MODE) {
   function info(el, kind) {
     var h = (kind === 'card' || kind === 'section') && el.querySelector('h1,h2,h3,h4,b,blockquote');
     var txt = kind === 'image' ? (el.getAttribute('alt') || 'image') : ((h || el).innerText || (h || el).textContent || '').trim().replace(/\s+/g, ' ').slice(0, 80);
-    return { kind: kind, label: txt, href: el.getAttribute && el.getAttribute('href') || '' };
+    // previews point in-page links at "about:srcdoc#…" so they scroll the preview; keep the site's real link
+    return { kind: kind, label: txt, href: (el.getAttribute && el.getAttribute('href') || '').replace(/^about:srcdoc/, '') };
   }
-  var TAGNAME = { div: 'Box', span: 'Text', p: 'Paragraph', h1: 'Heading', h2: 'Heading', h3: 'Heading', h4: 'Heading', a: 'Link', button: 'Button', img: 'Picture', svg: 'Icon', ul: 'List', ol: 'List', li: 'List item', section: 'Section', header: 'Header', footer: 'Footer', nav: 'Menu', article: 'Card', figure: 'Figure', blockquote: 'Quote', form: 'Form', input: 'Field', video: 'Video', canvas: 'Animation' };
-  function nameOf(el) {
-    var t = (el.innerText || '').trim().replace(/\s+/g, ' ');
-    if (t) return t.slice(0, 40);
-    var tag = el.tagName.toLowerCase(), alt = el.getAttribute && (el.getAttribute('alt') || el.getAttribute('aria-label'));
-    return alt ? alt.slice(0, 40) : (TAGNAME[tag] || 'Part');
-  }
-  var FOCUS = null;   // "Edit in detail": one section is shown, and any part of it can be chosen
   function targetOf(node) {
-    if (FOCUS) {
-      var fr = root(FOCUS); if (!fr || !fr.contains(node)) return null;
-      var t0 = node.nodeType === 1 ? node : node.parentElement;
-      var ed = t0.closest && t0.closest('[data-rk-edit]'); if (ed) return { el: ed, editId: ed.getAttribute('data-rk-edit') };
-      if (t0.closest('svg')) t0 = t0.closest('svg');
-      return { el: t0, addr: { scope: FOCUS, kind: 'node', path: pathFrom(fr, t0) }, info: { kind: 'node', label: nameOf(t0), href: t0.getAttribute('href') || '', cs: snapEl(t0) } };
-    }
     for (var el = node; el && el.nodeType === 1 && el !== document.body; el = el.parentElement) {
       if (el.classList.contains('rk-tag')) return null;
       var eid = el.getAttribute('data-rk-edit');
@@ -333,19 +297,8 @@ function __rkStudio(EDITS, MODE) {
     w.appendChild(f); F[e.id] = { mode: 'crop', f: f, wrap: w };
     return w;
   }
-  // editor: let clicks through to one tile's component so you can pick a part of it
-  var PICK_ID = null;
-  // a component's frame: a placed tile, or a block added in Blocks
-  function frameOf(id) { return F[id] ? F[id].f : document.querySelector('iframe[data-rk="' + id + '"]'); }
-  var PICK_HOW = true;
-  function setPick(id, how) {
-    var f0 = PICK_ID && frameOf(PICK_ID); if (f0) { f0.style.pointerEvents = 'none'; f0.contentWindow.postMessage({ rkPickMode: false }, '*'); }
-    PICK_ID = id || null; PICK_HOW = how || true;
-    var f1 = PICK_ID && frameOf(PICK_ID); if (f1) { f1.style.pointerEvents = 'auto'; f1.contentWindow.postMessage({ rkPickMode: PICK_HOW }, '*'); }
-  }
   function tileFrame(id, doc, tile, auto) {
     var f = frame(id, doc, 'component'); tile.appendChild(f);
-    f.addEventListener('load', function () { if (PICK_ID === id) setTimeout(function () { setPick(id); }, 300); });
     var k = F[id] = { mode: 'fit', f: f, tile: tile, s: 1, adj: 0, auto: auto, stage: 0 };
     if (window.ResizeObserver) new ResizeObserver(function () { fit(k); }).observe(tile);
     setTimeout(function () { fit(k); }, 0);
@@ -440,44 +393,6 @@ function __rkStudio(EDITS, MODE) {
       var be = byId[d.rkAct];
       if (d.link != null) { var l = (be.links || [])[d.link]; if (l) run({ id: be.id + '-' + d.link, action: l.action, popDoc: l.popDoc }); }
       else run(be);
-    }
-    if (d.rkInnerPick && MODE === 'edit') parent.postMessage({ rkInnerPick: d.rkInnerPick }, '*');
-    if (d.rkPartsOf && MODE === 'edit') parent.postMessage({ rkPartsOf: d.rkPartsOf }, '*');
-    if (d.rkListParts && MODE === 'edit') {
-      var page = [], scopes = [['nav', root('nav')]];
-      Array.prototype.forEach.call(document.querySelectorAll('.rk-block'), function (b) { scopes.push([b.getAttribute('data-block'), b]); });
-      scopes.forEach(function (sc) {
-        if (!sc[1]) return;
-        ['button', 'link'].forEach(function (k) {
-          Array.prototype.forEach.call(sc[1].querySelectorAll(KINDS[k]), function (el, i) {
-            if (el.closest('.rk-tile,.rk-crop')) return;
-            page.push({ addr: { scope: sc[0], kind: k, idx: i }, label: info(el, k).label, href: el.getAttribute('href') || '' });
-          });
-        });
-      });
-      parent.postMessage({ rkPartsOf: { page: page } }, '*');
-      Object.keys(F).forEach(function (id) { if (F[id].mode === 'fit' && F[id].f.contentWindow) F[id].f.contentWindow.postMessage({ rkListParts: true }, '*'); });
-    }
-    if ('rkInner' in d && MODE === 'edit') setPick(d.rkInner, d.detail ? 'detail' : true);
-    if (d.rkInnerSet && MODE === 'edit') { var tf = frameOf(d.rkInnerSet.frame); if (tf) tf.contentWindow.postMessage({ rkInnerSet: d.rkInnerSet.item }, '*'); }
-    if (d.rkSetStyle && MODE === 'edit') { var se = find(d.rkSetStyle.addr); if (se) Object.keys(d.rkSetStyle.style).forEach(function (k) { var v = d.rkSetStyle.style[k]; if (v === '' || v == null) se.style.removeProperty(k); else se.style.setProperty(k, v, 'important'); }); }
-    if (d.rkSetText && MODE === 'edit') { var sx = find(d.rkSetText.addr); if (sx) setText(sx, d.rkSetText.text); }
-    if (d.rkDetailAddr && MODE === 'edit') {
-      var da = d.rkDetailAddr, de = find(da), dr = root(da.scope);
-      if (de && dr) {
-        document.querySelectorAll('[data-rk-on]').forEach(function (x) { x.removeAttribute('data-rk-on'); });
-        de.setAttribute('data-rk-on', '');
-        var node = { scope: da.scope, kind: 'node', path: de === dr ? '' : pathFrom(dr, de) };
-        parent.postMessage({ rkPick: { addr: node, info: { kind: 'node', label: nameOf(de), href: de.getAttribute('href') || '', cs: snapEl(de) }, editId: null }, reveal: true }, '*');
-      }
-    }
-    if (d.rkPickAddr && MODE === 'edit') { var pe = find(d.rkPickAddr); if (pe) { var pt = targetOf(pe); if (pt) { pe.setAttribute('data-rk-on', ''); parent.postMessage({ rkPick: { addr: pt.addr || null, info: pt.info || null, editId: pt.editId || null } }, '*'); } } }
-    if (d.rkPickParent && MODE === 'edit') { var pf = frameOf(d.rkPickParent.frame); if (pf) pf.contentWindow.postMessage({ rkPickParent: d.rkPickParent.item }, '*'); }
-    if ('rkFocus' in d && MODE === 'edit') {
-      FOCUS = d.rkFocus || null;
-      document.querySelectorAll('[data-rk-focus-on]').forEach(function (x) { x.removeAttribute('data-rk-focus-on'); });
-      if (FOCUS) { var fe = root(FOCUS); if (fe) fe.setAttribute('data-rk-focus-on', ''); document.body.setAttribute('data-rk-focusing', ''); scrollTo(0, 0); }
-      else document.body.removeAttribute('data-rk-focusing');
     }
   });
 
@@ -701,35 +616,6 @@ function btnCssFrom(b) {
 }
 
 /* ------------------------------------------------------------------ describing a change in words */
-function actionWords(a, e) {
-  if (!a || a.type === 'none') return 'does nothing yet';
-  if (a.type === 'keep') return `goes where the old button went${a.href && a.href !== '#' ? ` (${a.href})` : ''}`;
-  if (a.type === 'link') return `opens ${a.href || 'a web page'}${a.newTab ? ' in a new tab' : ''}`;
-  if (a.type === 'section') return `scrolls down to “${blockLabel(a.block)}”`;
-  if (a.type === 'top') return 'scrolls back to the top';
-  if (a.type === 'popup') { const c = compById(a.compId); return `pops up “${c ? c.name : 'a component'}”`; }
-  return '';
-}
-function describeEdit(e) {
-  const c = e.compId && compById(e.compId), what = c ? `“${c.name}”` : 'it';
-  const t = quote(e.targetLabel || KIND_NAMES[e.target.kind]);
-  let s = '';
-  if (e.mode === 'text') return `Your ${KIND_NAMES[e.target.kind]} ${t} now says “${e.text}”.`;
-  if (e.mode === 'hide') return `Your ${KIND_NAMES[e.target.kind] || 'part'} ${t} is hidden.`;
-  if (e.mode === 'style') return `${quote(e.targetLabel || 'A part')} has a new look (${Object.keys(e.style || {}).map(k => k.replace(/-/g, ' ')).join(', ')}).`;
-  if (e.mode === 'replace') s = `${what} replaces your ${KIND_NAMES[e.target.kind]} ${t}`;
-  else if (e.mode === 'after') s = `${what} is added ${isClicky(e.target.kind) ? 'next to' : 'below'} your ${KIND_NAMES[e.target.kind]} ${t}`;
-  else s = `Your ${KIND_NAMES[e.target.kind]} ${t}`;
-  if (c && e.mode !== 'action' && isClicky(e.target.kind)) s += e.text ? ` and says “${e.text}”` : ', with its own words';
-  if (c && e.mode !== 'action' && !isClicky(e.target.kind)) {
-    const L = e.layout || { flow: true, size: 'auto' };
-    s += L.flow ? `, as a ${L.size === 'auto' ? '' : sizeName(L.size).toLowerCase() + ' '}bento tile — the page rearranges around it`
-      : e.mode === 'replace' ? `, fitted into the old ${KIND_NAMES[e.target.kind]}’s space — nothing else moves` : ', as a band below it — nothing else moves';
-  }
-  if (e.action) s += `. When someone clicks it, it ${actionWords(e.action, e)}`;
-  if (e.links && e.links.length) s += `. ${e.links.length} part${e.links.length > 1 ? 's' : ''} inside ${e.links.length > 1 ? 'are' : 'is'} linked`;
-  return s + '.';
-}
 
 /* ------------------------------------------------------------------ the Studio tab: one stage */
 // your page in the middle, components on the left, questions on the right, styles in a filmstrip below
@@ -738,7 +624,6 @@ function renderStudio() {
   if (!state.model) { box.innerHTML = '<div class="bx-panel bx-empty">Paste your site on the Explore tab first.</div>'; return; }
   ensureProject(); projectEdits();
   $('banner').innerHTML = '';
-  S.mode = 'edit'; S.tryIt = false; B.pendingWizard = null;   // one stage: drag components onto your page
   const T = state.tgt && state.tgt.tokens;
   if (T && state.mood === 'target' && S.matched !== T.name) {
     S.matched = T.name;
@@ -746,12 +631,11 @@ function renderStudio() {
     if (exact) { B.project.style = exact; saveProject(); toast(`Your page — and Reskin — now look like “${T.name}”. Try the others below.`, 4500); }
   }
   box.innerHTML = `<div id="stBody"></div><div class="film" id="stFilm"></div>`;
-  if (S.mode === 'blocks') renderBlocksWs(); else renderEditorWs();
+  renderEditorWs();
   renderFilm();
   if (typeof wearStyle === 'function') wearStyle(B.project.style);
-  if (B.pendingWizard) { const pw = B.pendingWizard; B.pendingWizard = null; startWizard(pw); }
 }
-const goWs = ws => { if (ws === 'component') return setView('library'); S.ask = null; S.picking = null; if (state.view !== 'studio') setView('studio'); else renderStudio(); };
+const goWs = ws => { if (ws === 'component') return setView('library'); if (state.view !== 'studio') setView('studio'); else renderStudio(); };
 
 // the stage's toolbar, shared by every mode
 function stToolbar() {
@@ -767,9 +651,9 @@ function stToolbar() {
 function wireStToolbar() {
   const p = B.project;
   $('stDev').onclick = e => {
-    const b = e.target.closest('button'); if (!b) return; S.device = B.device = b.dataset.d;
+    const b = e.target.closest('button'); if (!b) return; S.device = b.dataset.d;
     $('stDev').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
-    const fr = $('stFrame') || $('bdFrame'); if (fr) fr.className = 'bx-frame ' + S.device;
+    const fr = $('stFrame'); if (fr) fr.className = 'bx-frame ' + S.device;
   };
   $('stGear').onclick = () => openGear();
   $('stOpen').onclick = () => {
@@ -786,32 +670,6 @@ function wireStToolbar() {
   };
 }
 
-// Blocks: the page as a stack of parts (what the Build tab was) — same project, same stage
-function renderBlocksWs() {
-  const p = B.project, body = $('stBody');
-  B.device = S.device;
-  body.innerHTML = `
-    <div class="st-ed">
-      <div class="bx-panel st-rail bd-blocks">
-        <div class="bx-h"><h3>Your page <small>· drag to reorder</small></h3></div>
-        <div class="bd-fixed"><label><input type="checkbox" id="bdNav" ${p.hideNav ? '' : 'checked'}> Menu bar</label><span>always on top</span></div>
-        <div id="bdList"></div>
-        <div class="bd-fixed"><label><input type="checkbox" id="bdFoot" ${p.hideFooter ? '' : 'checked'}> Footer</label><span>always at the bottom</span></div>
-        <button class="bd-add" id="bdAdd">＋ Add a component</button>
-        <label class="found" style="display:flex;gap:6px;align-items:center;margin:0 12px 8px" title="Apply 'when it shows' rules in this preview"><input type="checkbox" id="bdRules" ${B.rulesPreview ? 'checked' : ''}> Try show rules</label>
-        <button class="ghost" id="bdReset" style="margin:0 12px 12px">Reset page</button>
-      </div>
-      <div class="bx-panel st-prev">${stToolbar()}<div class="st-stage"><div class="bx-frame ${S.device}" id="bdFrame"></div></div></div>
-      <div class="bx-panel st-side bd-side" id="bdSide"></div>
-    </div>`;
-  wireStToolbar();
-  renderBlockList(); renderSide(); renderBuildPreview();
-  $('bdNav').onchange = e => { p.hideNav = !e.target.checked; saveProject(); renderBuildPreview(); };
-  $('bdFoot').onchange = e => { p.hideFooter = !e.target.checked; saveProject(); renderBuildPreview(); };
-  $('bdRules').onchange = e => { B.rulesPreview = e.target.checked; renderBuildPreview(); };
-  $('bdAdd').onclick = () => startWizard({ after: B.sel });
-  $('bdReset').onclick = () => { if (confirm('Put the page back to just your site’s own sections? Added components and changes are removed.')) { p.blocks = siteBlocks(state.model); p.edits = []; p.btnCss = ''; p.btnFrom = null; B.sel = null; B.wizard = null; saveProject(); renderStudio(); } };
-}
 
 // the filmstrip: every generated style, live on your page; click one to put it on
 function renderFilm() {
@@ -844,7 +702,7 @@ function renderFilm() {
       strip.querySelectorAll('.film-item').forEach(x => x.classList.toggle('on', x.dataset.id === st.id));
       $('filmSave').textContent = isSaved(st) ? '♥ Saved' : '♡ Save this style';
       if (typeof wearStyle === 'function') wearStyle(st);
-      if (S.mode === 'blocks') renderBuildPreview(); else renderStudioPreview();
+      renderStudioPreview();
       const t = document.querySelector('.st-tool h3'); if (t) t.firstChild.textContent = p.name + ' ';
     };
     el.onclick = e => { if (e.target.closest('.film-zoom')) { openModal(st); return; } use(); };
@@ -961,7 +819,7 @@ function placeComp(compId, it) {
     const b = blockById(it.scope); if (!b) return;
     b.compId = c.id; b.label = c.name; delete b.inner; delete b.props; msg = `Swapped in “${c.name}”`;
   } else if (it.kind === 'replace') {
-    const href = it.info && it.info.href;
+    const href = it.info && it.info.href && it.info.href.replace(/^about:srcdoc/, '');
     edits.push({ id: newEditId(), target: it.addr, targetLabel: (it.info && it.info.label) || '', targetHref: href || '', mode: 'replace', compId: c.id,
       text: (it.info && it.info.label) || null, recolor, action: href && href !== '#' ? { type: 'keep', href } : null });
     msg = `“${c.name}” replaced “${((it.info && it.info.label) || 'the button').slice(0, 30)}” — same words, same link`;
@@ -1003,22 +861,14 @@ function renderStudioPreview() {
   const box = $('stFrame'); if (!box) return;
   const f = document.createElement('iframe');
   f.setAttribute('sandbox', 'allow-scripts allow-popups allow-popups-to-escape-sandbox'); f.title = 'Your page';
-  f.srcdoc = injectPreviewCss(composeDoc({ preview: true, rules: false, studio: S.tryIt ? 'try' : 'edit' }));
-  f.onload = () => setTimeout(() => {
-    if ((S.mode === 'links')) { renderNodes(); setTimeout(() => stPost({ rkListParts: true }), 1500); setTimeout(() => stPost({ rkListParts: true }), 5000); }
-    if (S.picking) stPost({ rkOnly: true });
-    if (S.innerPick) stPost({ rkInner: S.innerPick });
-    if (S.focus) { stPost({ rkFocus: S.focus.scope }); if (S.focus.frame) setTimeout(() => stPost({ rkInner: S.focus.frame, detail: true }), 400); }
-    const hi = S.sel && (S.sel.editId ? { editId: S.sel.editId } : { addr: S.sel.addr });
-    if (hi) stPost({ rkHi: hi });
-  }, 120);
+  f.srcdoc = injectPreviewCss(composeDoc({ preview: true, rules: false, studio: 'edit' }));
   box.replaceChildren(f);
 }
 
 // messages from the editor preview
 addEventListener('message', e => {
   const d = e.data || {};
-  if (state.view !== 'studio' || S.mode === 'blocks' || !$('stFrame')) return;
+  if (state.view !== 'studio' || !$('stFrame')) return;
   const f = $('stFrame').querySelector('iframe'); if (!f || e.source !== f.contentWindow) return;
   if (d.rkDrop) {
     const it = d.rkDrop; let compId = S.drag; S.drag = null;
@@ -1045,290 +895,20 @@ addEventListener('message', e => {
     const items = ctxItems(d.rkCtx); if (items.length) openCtx(fr.left + d.x, fr.top + d.y, items);
     return;
   }
-  if (d.rkPartsOf) {
-    if (d.rkPartsOf.page) S.parts.page = d.rkPartsOf.page;
-    if (d.rkPartsOf.id) S.parts.comps[d.rkPartsOf.id] = d.rkPartsOf.parts;
-    if ((S.mode === 'links')) { clearTimeout(S._nt); S._nt = setTimeout(renderNodes, 120); }
-    return;
-  }
-  if (d.rkInnerPick && d.rkInnerPick.detail && S.focus) {
-    const ip = d.rkInnerPick; S.ask = null; S.sel = { inner: { frame: ip.id, path: ip.path, label: ip.label, cs: ip.cs } };
-    renderSideStudio(); return;
-  }
-  if (d.rkInnerPick && S.innerPick) {   // a part inside a component was clicked: ask what it should do
-    const ed = editById(d.rkInnerPick.id); if (!ed) return;
-    const part = d.rkInnerPick; S.innerPick = null; stPost({ rkInner: null });
-    if (S.backToLinks) {   // came from the node view: add the part there and let them wire it
-      S.backToLinks = false; S.mode = 'links';
-      const list = S.parts.comps[ed.id] || (S.parts.comps[ed.id] = []);
-      if (!list.some(x => x.path === part.path)) list.push({ path: part.path, label: part.label });
-      S.wireFrom = 'e:' + ed.id + '|' + part.path;
-      renderEditorWs(); toast(`Now click where ${quote(part.label)} should go`); return;
-    }
-    const old = (ed.links || []).find(l => l.path === part.path);
-    S.sel = { editId: ed.id };
-    S.ask = { inner: { editId: ed.id, path: part.path, label: part.label }, compId: null, addr: ed.target, info: { kind: 'button', label: part.label, href: '' },
-      place: 'action', step: 'click', recolor: !!ed.recolor, layout: { flow: true, size: 'auto' },
-      action: old ? structuredClone(old.action) : { type: 'section', href: '', newTab: false, block: (B.project.blocks.find(b => !b.hidden) || {}).id || '', compId: '' } };
-    renderEditorWs(); return;
-  }
-  if (d.rkPick) {
-    const t = d.rkPick;
-    if (S.picking === 'opener') {
-      const ed = t.editId && editById(t.editId);
-      if (ed && isClicky(ed.target.kind)) S.ask.opener = { editId: ed.id, addr: ed.target, info: { kind: ed.target.kind, label: ed.text || ed.targetLabel, href: ed.targetHref } };
-      else if (t.addr && isClicky(t.addr.kind)) S.ask.opener = { addr: t.addr, info: t.info };
-      else { toast('Click a button or a link'); return; }
-      S.picking = null; S.ask.step = 'confirm';
-      renderEditorWs(); return;
-    }
-    if (S.armed) {   // click-to-place: same questions as a drop
-      const compId = S.armed; S.armed = null;
-      $('stFrame').parentElement.querySelectorAll('.st-banner').forEach(b => b.remove());
-      document.querySelectorAll('.st-chip.armed').forEach(c => c.classList.remove('armed'));
-      if (t.editId) { const ed = editById(t.editId); if (ed) startAsk({ compId, addr: ed.target, info: { kind: ed.target.kind, label: ed.targetLabel, href: ed.targetHref }, replacing: ed.id }); }
-      else startAsk({ compId, addr: t.addr, info: t.info });
-      return;
-    }
-    S.ask = null; S.sel = t; S.propsFor = null; if (d.reveal) S.reveal = true;
-    stPost({ rkHi: t.editId ? { editId: t.editId } : { addr: t.addr } });
-    renderSideStudio();
-  }
 });
 
 /* ---- the node view: wire parts (left) to where they go (right) ---- */
-const addrKey = a => a.scope + '|' + a.kind + '|' + a.idx;
-const tileEdits = () => projectEdits().filter(e => e.compId && e.mode !== 'action' && !isClicky(e.target.kind));
-function nodeTargets() {
-  const p = B.project, hrefs = new Set();
-  const acts = [...projectEdits().map(e => e.action), ...projectEdits().flatMap(e => (e.links || []).map(l => l.action))];
-  acts.forEach(a => { if (a && a.type === 'link' && a.href) hrefs.add(a.href); });
-  return [
-    { title: 'Sections of this page', icon: '↓', rows: p.blocks.filter(b => !b.hidden).map(b => ({ key: 's:' + b.id, label: b.label, action: { type: 'section', block: b.id } })) },
-    { title: 'Back to top', icon: '↑', rows: [{ key: 'top', label: 'Top of the page', action: { type: 'top' } }] },
-    { title: 'Pop up', icon: '◳', rows: comps.list.map(c => ({ key: 'p:' + c.id, label: c.name, action: { type: 'popup', compId: c.id } })) },
-    { title: 'A web page', icon: '↗', rows: [...[...hrefs].map(h => ({ key: 'w:' + h, label: h, action: { type: 'link', href: h, newTab: true } })), { key: 'w:new', label: '＋ New address…', action: null }] },
-  ];
-}
-const targetKey = a => !a ? null : a.type === 'section' ? 's:' + a.block : a.type === 'top' ? 'top' : a.type === 'popup' ? 'p:' + a.compId : a.type === 'link' ? 'w:' + a.href : null;
-function nodeSources() {
-  const edits = projectEdits(), out = [];
-  const pageRows = S.parts.page.map(pp => {
-    const ed = edits.find(e => sameAddr(e.target, pp.addr) && e.mode !== 'after');
-    const label = ed && ed.text ? ed.text : pp.label;
-    const act = ed ? ed.action : null;
-    return { key: 'b:' + addrKey(pp.addr), label, sub: pp.addr.kind === 'link' ? 'menu link' : 'button', action: act, pp };
-  });
-  out.push({ title: 'Buttons on your page', rows: pageRows, empty: 'Reading your page…' });
-  tileEdits().forEach(e => {
-    const c = compById(e.compId); if (!c) return;
-    const listed = S.parts.comps[e.id] || [], rows = [];
-    [...listed, ...(e.links || []).filter(l => !listed.some(x => x.path === l.path))].forEach(pt => {
-      const l = (e.links || []).find(x => x.path === pt.path);
-      rows.push({ key: 'e:' + e.id + '|' + pt.path, label: pt.label, action: l ? l.action : null, editId: e.id, part: pt });
-    });
-    out.push({ title: c.name, editId: e.id, rows, empty: 'Reading its parts…' });
-  });
-  return out;
-}
-function setSourceAction(row, action) {
-  const edits = projectEdits();
-  if (row.editId) {
-    const e = editById(row.editId), links = e.links || (e.links = []), i = links.findIndex(l => l.path === row.part.path);
-    if (!action) { if (i >= 0) links.splice(i, 1); }
-    else { const l = { path: row.part.path, label: row.part.label, action }; if (i >= 0) links.splice(i, 1, l); else links.push(l); }
-  } else {
-    const pp = row.pp, ed = edits.find(e => sameAddr(e.target, pp.addr) && e.mode !== 'after');
-    if (ed) { ed.action = action; if (!action && ed.mode === 'action') edits.splice(edits.indexOf(ed), 1); }
-    else if (action) edits.push({ id: newEditId(), target: pp.addr, targetLabel: pp.label, targetHref: pp.href, mode: 'action', compId: null, text: null, recolor: false, action });
-  }
-  saveProject();
-}
-function renderNodes() {
-  const box = $('stNodes'); if (!box || !(S.mode === 'links')) return;
-  const sources = nodeSources(), targets = nodeTargets(), rowsByKey = {};
-  sources.forEach(n => n.rows.forEach(r => { rowsByKey[r.key] = r; }));
-  const tByKey = {}; targets.forEach(n => n.rows.forEach(r => { tByKey[r.key] = r; }));
-  const wired = sources.flatMap(n => n.rows.filter(r => r.action && tByKey[targetKey(r.action)]).map(r => ({ from: r.key, to: targetKey(r.action), r })));
-  const used = new Set(wired.map(w => w.to));
-  box.innerHTML = `
-    ${S.wireFrom && rowsByKey[S.wireFrom] ? `<div class="nd-armed">👉 Now click where <b>${esc(quote(rowsByKey[S.wireFrom].label))}</b> should go, on the right. <button class="ghost" id="ndCancel">Cancel</button></div>`
-      : '<div class="nd-help"><b>Drag from a dot on the left to where it should go on the right.</b> Or click a dot, then the other. Click a line to remove it.</div>'}
-    <div class="nd-cols">
-      <div class="nd-col"><div class="nd-colh">When someone clicks…</div>${sources.map(n => `
-        <div class="nd-node"><div class="nd-title">${esc(n.title)}</div>
-          ${n.rows.length ? n.rows.map(r => `<div class="nd-row"><span class="nd-lbl" title="${esc(r.label)}">${esc(r.label)}${r.sub ? `<small>${r.sub}</small>` : ''}</span><button class="nd-dot nd-out ${S.wireFrom === r.key ? 'armed' : ''} ${r.action ? 'on' : ''}" data-from="${esc(r.key)}" title="Drag to where it should go"></button></div>`).join('') : `<p class="nd-empty">${n.empty}</p>`}
-          ${n.editId ? `<button class="nd-add" data-pickpart="${n.editId}">＋ Pick a part in the preview</button>` : ''}
-        </div>`).join('')}</div>
-      <div class="nd-gap"></div>
-      <div class="nd-col"><div class="nd-colh">…it goes to</div>${targets.map(n => `
-        <div class="nd-node nd-to"><div class="nd-title"><i>${n.icon}</i>${esc(n.title)}</div>
-          ${n.rows.length ? n.rows.map(r => `<div class="nd-row"><button class="nd-dot nd-in ${used.has(r.key) ? 'on' : ''}" data-to="${esc(r.key)}" title="Drop here"></button><span class="nd-lbl" title="${esc(r.label)}">${esc(r.label)}</span></div>`).join('') : '<p class="nd-empty">Save a component first.</p>'}
-        </div>`).join('')}</div>
-      <svg class="nd-wires" id="ndWires"></svg>
-    </div>
-    <div class="nd-list"><b>Your links</b>${wired.length ? wired.map(w => `<div class="st-link"><span class="st-chg">${esc(quote(w.r.label))} → ${esc(actionWords(w.r.action))}</span><button class="icon" data-unwire="${esc(w.from)}" title="Remove">✕</button></div>`).join('') : '<p class="st-muted">No links yet.</p>'}</div>`;
-
-  const svg = $('ndWires'), cols = box.querySelector('.nd-cols');
-  const ctr = el => { const r = el.getBoundingClientRect(), c = cols.getBoundingClientRect(); return [r.left + r.width / 2 - c.left, r.top + r.height / 2 - c.top]; };
-  const curve = (a, b) => { const dx = Math.max(60, (b[0] - a[0]) / 2); return `M${a[0]},${a[1]} C${a[0] + dx},${a[1]} ${b[0] - dx},${b[1]} ${b[0]},${b[1]}`; };
-  const dotOf = (attr, key) => box.querySelector(`[${attr}="${CSS.escape(key)}"]`);
-  function drawWires(temp) {
-    svg.setAttribute('width', cols.scrollWidth); svg.setAttribute('height', cols.scrollHeight);
-    svg.innerHTML = wired.map(w => { const a = dotOf('data-from', w.from), b = dotOf('data-to', w.to); return a && b ? `<path class="nd-wire" data-unwire="${esc(w.from)}" d="${curve(ctr(a), ctr(b))}"><title>${esc(w.r.label)} → ${esc(actionWords(w.r.action))} (click to remove)</title></path>` : ''; }).join('')
-      + (temp ? `<path class="nd-wire temp" d="${curve(temp[0], temp[1])}"/>` : '');
-  }
-  drawWires();
-  if ($('ndCancel')) $('ndCancel').onclick = () => { S.wireFrom = null; renderNodes(); };
-  // bring the picked button into view inside the node panel (not the whole page)
-  const armed = S.wireFrom && box.querySelector('.nd-out.armed');
-  if (armed && !box._shown) { box._shown = S.wireFrom; const r = armed.getBoundingClientRect(), b = box.getBoundingClientRect(); box.scrollTop += r.top - b.top - 90; armed.closest('.nd-row').classList.add('nd-flash'); }
-  if (!S.wireFrom) box._shown = null;
-  if (!box._ro) { box._ro = new ResizeObserver(() => (S.mode === 'links') && renderNodesWires()); box._ro.observe(box); }
-  S._drawWires = drawWires;
-
-  function connect(fromKey, toKey) {
-    const row = rowsByKey[fromKey]; if (!row) return;
-    let t = tByKey[toKey]; if (!t) return;
-    let action = t.action;
-    if (toKey === 'w:new') {
-      const h = (prompt('Web address it should open (https://…)') || '').trim(); if (!h) return;
-      action = { type: 'link', href: /^(https?:|mailto:|tel:|#)/i.test(h) ? h : 'https://' + h, newTab: true };
-    }
-    setSourceAction(row, action); S.wireFrom = null;
-    toast(`${quote(row.label)} → ${actionWords(action)}`);
-    renderNodes(); renderStudioPreview(); renderSideStudio();
-  }
-  // drag a wire, or click one dot then the other
-  box.querySelectorAll('.nd-out').forEach(dot => dot.onpointerdown = ev => {
-    ev.preventDefault(); const from = dot.dataset.from, start = ctr(dot), x0 = ev.clientX, y0 = ev.clientY; let moved = false;
-    const move = e => { if (Math.abs(e.clientX - x0) + Math.abs(e.clientY - y0) > 6) moved = true; const c = cols.getBoundingClientRect(); drawWires([start, [e.clientX - c.left, e.clientY - c.top]]); };
-    const up = e => {
-      removeEventListener('pointermove', move); removeEventListener('pointerup', up);
-      const over = document.elementFromPoint(e.clientX, e.clientY), to = over && over.closest('.nd-in');
-      if (to) return connect(from, to.dataset.to);
-      drawWires();
-      if (!moved) { S.wireFrom = S.wireFrom === from ? null : from; box._shown = S.wireFrom; renderNodes(); }
-    };
-    addEventListener('pointermove', move); addEventListener('pointerup', up);
-  });
-  box.querySelectorAll('.nd-in').forEach(dot => dot.onclick = () => { if (S.wireFrom) connect(S.wireFrom, dot.dataset.to); else toast('Start from a dot on the left'); });
-  box.querySelectorAll('[data-unwire]').forEach(el => el.onclick = () => { const row = rowsByKey[el.dataset.unwire]; if (!row) return; setSourceAction(row, null); toast('Link removed'); renderNodes(); renderStudioPreview(); });
-  box.querySelectorAll('[data-pickpart]').forEach(b => b.onclick = () => { S.mode = 'edit'; S.backToLinks = true; S.innerPick = b.dataset.pickpart; renderEditorWs(); });
-}
-// "Change what it does when clicked": straight to the node view with this button's dot already picked
-function openLinksFor(addr, label) {
-  S.mode = 'links'; S.ask = null; S.picking = null; S.tryIt = false;
-  S.wireFrom = 'b:' + addrKey(addr); S.wireLabel = label || 'it';
-  renderStudio();
-}
-function renderNodesWires() { if (S._drawWires && $('ndWires')) S._drawWires(); }
 
 /* ---- "Edit in detail": one section or component on its own, every part editable ---- */
 const blockById = id => B.project.blocks.find(b => b.id === id);
-function focusOn(t) {
-  let scope, label, frame = null;
-  if (t.editId) { const e = editById(t.editId); if (!e) return; scope = e.target.scope; frame = e.compId && !isClicky(e.target.kind) ? e.id : null; label = (compById(e.compId) || {}).name || 'this part'; }
-  else { scope = t.addr.scope; const b = blockById(scope); frame = b && b.kind === 'comp' ? b.id : null; label = b ? b.label : scope === 'nav' ? 'Menu bar' : scope === 'footer' ? 'Footer' : 'this section'; }
-  if (scope === 'nav' || scope === 'footer') { toast('The menu bar and footer can be edited part by part right on the page'); return; }
-  S.mode = 'edit'; S.tryIt = false; S.ask = null; S.sel = null; S.focus = { scope, label, frame };
-  renderEditorWs();
-  toast(frame ? `Click any part of “${label}” to change it` : `Click any part of “${label}” to change it — or double-click text to type`, 3500);
-}
-function leaveFocus() { S.focus = null; S.sel = null; stPost({ rkFocus: null }); stPost({ rkInner: null }); renderEditorWs(); }
 function removeBlock(id) {
   const arr = B.project.blocks, b = blockById(id); if (!b) return;
   const i = arr.indexOf(b);
   if (b.replaces) arr.splice(i, 1, ...siteBlocks(state.model).filter(x => x.ref === b.replaces)); else arr.splice(i, 1);
   B.project.edits = projectEdits().filter(e => e.target.scope !== id);
-  if (S.focus && S.focus.scope === id) S.focus = null;
-  S.sel = null; saveProject(); toast(`Removed “${b.label}”${b.replaces ? ' — your own section is back' : ''}`); renderStudio();
-}
-// what's already been changed on this part
-function detailState(t) {
-  if (t.inner) {
-    const owner = editById(t.inner.frame) || blockById(t.inner.frame), it = owner && (owner.inner || []).find(x => x.path === t.inner.path);
-    return { owner, text: it && it.text, style: (it && it.style) || {}, hide: !!(it && it.hide) };
-  }
-  const edits = projectEdits(), a = t.addr;
-  const st = edits.find(e => e.mode === 'style' && sameAddr(e.target, a)), tx = edits.find(e => e.mode === 'text' && sameAddr(e.target, a)), hd = edits.find(e => e.mode === 'hide' && sameAddr(e.target, a));
-  return { text: tx && tx.text, style: (st && st.style) || {}, hide: !!hd };
+  saveProject(); toast(`Removed “${b.label}”${b.replaces ? ' — your own section is back' : ''}`); renderStudio();
 }
 const toHex = c => { try { return rgbToHex(cssToRgb(c)); } catch { return '#000000'; } };
-function renderDetail(t) {
-  const side = $('stSide'), inner = t.inner, cs = (inner ? inner.cs : t.info && t.info.cs) || {}, label = inner ? inner.label : (t.info && t.info.label) || 'this part';
-  const cur = detailState(t), st = { ...cur.style }, px = (k, d) => st[k] != null && st[k] !== '' ? parseFloat(st[k]) : d;
-  const text = cur.text != null ? cur.text : cs.text;
-  const row = (id, name, min, max, val, unit = 'px') => `<label class="dt-row"><span>${name}</span><input type="range" id="${id}" min="${min}" max="${max}" value="${Math.round(val || 0)}"><output id="${id}V">${Math.round(val || 0)}${unit}</output></label>`;
-  side.innerHTML = `<div class="bx-h"><h3>✎ ${esc(quote(label))} <small>${esc(cs.tag || '')}</small></h3><button class="icon" id="dtX" title="Close">✕</button></div>
-    <div class="bx-pad dt">
-      ${text && String(text).trim() ? `<label class="field"><span>Text</span><textarea id="dtText" rows="${Math.min(6, Math.ceil(text.length / 34) + 1)}">${esc(text)}</textarea></label>` : ''}
-      <div class="dt-cols">
-        <label class="dt-col"><span>Text colour</span><input type="color" id="dtColor" value="${toHex(st.color || cs.color)}"></label>
-        <label class="dt-col"><span>Background</span><input type="color" id="dtBg" value="${toHex(st['background-color'] || cs.bg)}"></label>
-      </div>
-      ${row('dtFs', 'Text size', 8, 140, px('font-size', cs.fs))}
-      ${row('dtPad', 'Padding', 0, 120, px('padding', cs.pad))}
-      ${row('dtMt', 'Space above', 0, 160, px('margin-top', cs.mt))}
-      ${row('dtMb', 'Space below', 0, 160, px('margin-bottom', cs.mb))}
-      ${row('dtR', 'Corners', 0, 80, Math.min(80, px('border-radius', cs.radius)))}
-      <div class="dt-row"><span>Align</span><div class="seg" id="dtAlign">${['left', 'center', 'right'].map(a => `<button data-a="${a}" class="${(st['text-align'] || cs.align) === a || (a === 'left' && /start/.test(st['text-align'] || cs.align)) ? 'on' : ''}">${a === 'left' ? '⟸' : a === 'center' ? '⟺' : '⟹'}</button>`).join('')}</div></div>
-      <label class="check"><input type="checkbox" id="dtHide" ${cur.hide ? 'checked' : ''}> Hide this part</label>
-      <div class="dt-acts">
-        <button class="ghost" id="dtUp" title="Choose the part this sits in">⬆ The part around it</button>
-        ${!inner && t.addr && (/^(a|button)$/.test(cs.tag) || t.info.href) ? '<button class="ghost" id="dtLink">🔗 When clicked…</button>' : ''}
-        <button class="ghost" id="dtReset" style="color:#b2341a">↺ Reset this part</button>
-      </div>
-      <p class="st-muted">Changes show as you make them and are saved with your page.</p>
-    </div>`;
-  const touched = new Set(Object.keys(st));
-  const read = () => {
-    const out = {};
-    const take = (k, v) => { if (touched.has(k)) out[k] = v; };
-    take('color', $('dtColor').value); take('background-color', $('dtBg').value);
-    take('font-size', $('dtFs').value + 'px'); take('padding', $('dtPad').value + 'px');
-    take('margin-top', $('dtMt').value + 'px'); take('margin-bottom', $('dtMb').value + 'px'); take('border-radius', $('dtR').value + 'px');
-    if (touched.has('text-align')) out['text-align'] = st['text-align'];
-    return out;
-  };
-  const live = () => {
-    const style = read(), hide = $('dtHide').checked, txt = $('dtText') ? $('dtText').value : null;
-    if (inner) stPost({ rkInnerSet: { frame: inner.frame, item: { path: inner.path, label: inner.label, text: txt != null && txt !== cs.text ? txt : cur.text, style, hide } } });
-    else { stPost({ rkSetStyle: { addr: t.addr, style: { ...style, display: hide ? 'none' : '' } } }); if (txt != null && txt !== text) stPost({ rkSetText: { addr: t.addr, text: txt } }); }
-  };
-  const save = () => {
-    const style = read(), hide = $('dtHide').checked, txt = $('dtText') ? $('dtText').value.trim() : null;
-    if (inner) {
-      const owner = cur.owner; if (!owner) return;
-      const list = owner.inner || (owner.inner = []), i = list.findIndex(x => x.path === inner.path);
-      const item = { path: inner.path, label: inner.label, style, hide, text: txt != null && txt !== (cs.text || '').trim() ? txt : (cur.text || null) };
-      if (i >= 0) list.splice(i, 1, item); else list.push(item);
-    } else {
-      const edits = projectEdits(), a = t.addr, has = m => edits.find(e => e.mode === m && sameAddr(e.target, a));
-      const se = has('style');
-      if (Object.keys(style).length) { if (se) se.style = style; else edits.push({ id: newEditId(), target: a, targetLabel: label, mode: 'style', style }); } else if (se) edits.splice(edits.indexOf(se), 1);
-      const he = has('hide'); if (hide && !he) edits.push({ id: newEditId(), target: a, targetLabel: label, mode: 'hide' }); if (!hide && he) edits.splice(edits.indexOf(he), 1);
-      if (txt != null && txt && txt !== (text || '').trim()) { const te = has('text'); if (te) te.text = txt; else edits.push({ id: newEditId(), target: a, targetLabel: label, mode: 'text', text: txt }); }
-    }
-    saveProject();
-  };
-  const bind = (id, k) => { const el = $(id); el.oninput = () => { touched.add(k); if ($(id + 'V')) $(id + 'V').textContent = el.value + 'px'; live(); }; el.onchange = save; };
-  bind('dtColor', 'color'); bind('dtBg', 'background-color'); bind('dtFs', 'font-size'); bind('dtPad', 'padding'); bind('dtMt', 'margin-top'); bind('dtMb', 'margin-bottom'); bind('dtR', 'border-radius');
-  if ($('dtText')) { $('dtText').oninput = live; $('dtText').onchange = save; }
-  $('dtHide').onchange = () => { live(); save(); };
-  $('dtAlign').onclick = e => { const b = e.target.closest('button'); if (!b) return; st['text-align'] = b.dataset.a; touched.add('text-align'); $('dtAlign').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); live(); save(); };
-  $('dtX').onclick = () => { S.sel = null; renderSideStudio(); };
-  $('dtUp').onclick = () => {
-    if (inner) stPost({ rkPickParent: { frame: inner.frame, item: { path: inner.path, label: inner.label } } });
-    else { const p = t.addr.path.split('>'); p.pop(); stPost({ rkPickAddr: { scope: t.addr.scope, kind: 'node', path: p.join('>') } }); }
-  };
-  if ($('dtLink')) $('dtLink').onclick = () => toast('Leave detail mode, then right-click this button → When clicked…');
-  $('dtReset').onclick = () => {
-    if (inner) { const owner = cur.owner; if (owner && owner.inner) owner.inner = owner.inner.filter(x => x.path !== inner.path); }
-    else B.project.edits = projectEdits().filter(e => !(['style', 'text', 'hide'].includes(e.mode) && sameAddr(e.target, t.addr)));
-    saveProject(); S.sel = null; toast('This part is back to how it was'); renderEditorWs();
-  };
-}
 
 /* ---- right-click menu ---- */
 function saveTextEdit(addr, text, was) {
@@ -1362,264 +942,7 @@ function ctxItems(t) {
 }
 
 /* ---- the questions ---- */
-async function startAsk({ compId, addr, info, replacing, actionOnly, editing }) {
-  const c = compId && compById(compId);
-  if (addr && (addr.scope === 'nav' || addr.scope === 'footer') && addr.kind === 'section') { toast('Drop it on a button or link in the menu, or on a part of the page below it'); return; }
-  if (c) { toast('Reading the component…', 1200); await ensureCompTokens(c); }
-  const old = editing ? editById(editing) : null;
-  S.sel = replacing ? { editId: replacing } : old ? { editId: old.id } : { addr, info };
-  S.ask = old ? {
-    editing: old.id, compId: old.compId, addr: old.target, info: { kind: old.target.kind, label: old.targetLabel, href: old.targetHref },
-    place: old.mode, words: old.text ? (old.text === old.targetLabel ? 'old' : 'new') : 'own', text: old.text || '', recolor: !!old.recolor, layout: { flow: true, size: 'auto', ...(old.layout || {}) },
-    action: structuredClone(old.action || { type: 'none' }), step: actionOnly ? 'click' : old.mode === 'action' ? 'click' : 'place', allBtns: false,
-  } : {
-    compId, addr, info, replacing, place: actionOnly ? 'action' : 'replace', words: 'old', text: '', layout: { flow: true, size: 'auto' }, recolor: !!brandColor() && !!(c && c.tokens && (c.tokens.accent || c.tokens.btnBg)),
-    action: { type: info && info.href && info.href !== '#' ? 'keep' : 'none', href: '', newTab: false, block: '', compId: '' },
-    step: actionOnly ? 'click' : 'place', allBtns: false,
-  };
-  if (S.ask.action.type === 'keep') S.ask.action.href = S.ask.info.href;
-  renderSideStudio();
-  stPost({ rkHi: S.sel.editId ? { editId: S.sel.editId } : { addr } });
-  $('stSide').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-}
-function askSteps(a) {
-  if (a.place === 'action') return ['click', 'confirm'];
-  if (isClicky(a.addr.kind)) return ['place', 'words', 'click', 'confirm'];
-  return a.place === 'popup' ? ['place', 'opener', 'confirm'] : ['place', 'layout', 'confirm'];
-}
-const opt = (name, val, cur, title, sub, extra = '') => `<label class="opt ${cur === val ? 'on' : ''}"><input type="radio" name="${name}" value="${val}" ${cur === val ? 'checked' : ''}><div><b>${title}</b>${sub ? `<span>${sub}</span>` : ''}${extra}</div></label>`;
 
-function revealSide() {
-  const s = $('stSide'); if (!s) return;
-  const r = s.getBoundingClientRect();
-  if (r.top > innerHeight - 80 || r.bottom < 80) s.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  s.classList.remove('st-flash'); void s.offsetWidth; s.classList.add('st-flash');
-}
-function renderSideStudio() {
-  if (S.reveal) { S.reveal = false; setTimeout(revealSide, 30); }
-  const side = $('stSide'); if (!side) return;
-  const a = S.ask;
-  if (!a) return renderSelInfo();
-  const c = a.compId && compById(a.compId), k = a.addr.kind, kn = KIND_NAMES[k], lbl = quote(a.info && a.info.label || kn);
-  const steps = askSteps(a), i = steps.indexOf(a.step);
-  let q = '', body = '';
-  if (a.step === 'place') {
-    if (isClicky(k)) {
-      q = `Is “${esc(c.name)}” a new ${kn}, or is it replacing ${esc(lbl)}?`;
-      body = opt('pl', 'replace', a.place, `Replace ${esc(lbl)}`, `The old ${kn} goes away; this one takes its place.`) +
-        opt('pl', 'after', a.place, `It’s a new ${kn}`, `Keep ${esc(lbl)} and put this one next to it.`);
-    } else if (k === 'section') {
-      q = `What should “${esc(c.name)}” do with this section?`;
-      body = opt('pl', 'replace', a.place, 'Replace this section', `“${esc(blockLabel(a.addr.scope))}” goes away; the component takes its place.`) +
-        opt('pl', 'after', a.place, 'Add it below this section', 'As a new part of the page.') +
-        opt('pl', 'popup', a.place, 'Pop it up when a button is clicked', 'It’s not on the page — it opens on top when someone clicks a button you choose.');
-    } else {
-      q = `Should “${esc(c.name)}” replace this ${kn}, or go below it?`;
-      body = opt('pl', 'replace', a.place, `Replace the ${kn}`, esc(lbl)) +
-        opt('pl', 'after', a.place, `Add it below the ${kn}`, 'Everything else stays.') +
-        opt('pl', 'popup', a.place, 'Pop it up when a button is clicked', 'It opens on top of the page when someone clicks a button you choose.');
-    }
-  } else if (a.step === 'words') {
-    {
-      q = `What should the ${kn} say?`;
-      body = (a.info.label ? opt('wd', 'old', a.words, `Keep ${esc(lbl)}`, a.place === 'replace' ? 'Same words, new look.' : 'The same words as the one next to it.') : '') +
-        opt('wd', 'new', a.words, 'Something else', '', `<input class="st-in" id="askText" value="${esc(a.text)}" placeholder="e.g. Book a table">`) +
-        opt('wd', 'own', a.words, 'Keep the component’s own words', '');
-    }
-    body += `<label class="check" style="margin-top:10px"><input type="checkbox" id="askRc" ${a.recolor ? 'checked' : ''} ${brandColor() ? '' : 'disabled'}> Match my brand colour</label>`;
-  } else if (a.step === 'layout') {
-    q = 'How should it sit on your page?';
-    const L = a.layout;
-    body = opt('lf', 'flow', L.flow ? 'flow' : 'keep', 'Let the page rearrange around it', 'Bento layout: it becomes a tile, and the parts around it move to fill the space.',
-        L.flow ? `<div style="margin-top:8px">${sizeChips(L.size, 'data-sz')}</div>` : '') +
-      opt('lf', 'keep', L.flow ? 'flow' : 'keep', 'Keep everything where it is',
-        a.place === 'replace' ? `It fits into the old ${kn}’s space. Nothing else moves.` : 'It goes in as a band below. Nothing else moves.');
-    body += `<label class="check" style="margin-top:10px"><input type="checkbox" id="askRc" ${a.recolor ? 'checked' : ''} ${brandColor() ? '' : 'disabled'}> Match my brand colour</label>`;
-  } else if (a.step === 'click') {
-    const name = a.place === 'action' ? lbl : a.words === 'new' && a.text ? quote(a.text) : a.words === 'old' ? lbl : 'it';
-    q = `When someone clicks ${esc(name)}, it…`;
-    const secs = B.project.blocks.filter(b => !b.hidden);
-    body =
-      (a.info.href && a.info.href !== '#' ? opt('ac', 'keep', a.action.type, `Goes where ${esc(lbl)} went`, esc(a.info.href)) : '') +
-      opt('ac', 'section', a.action.type, 'Scrolls to a part of this page', '', `<select class="st-in" id="askSec">${secs.map(b => `<option value="${b.id}" ${a.action.block === b.id ? 'selected' : ''}>${esc(b.label)}</option>`).join('')}</select>`) +
-      opt('ac', 'link', a.action.type, 'Opens a web page', '', `<input class="st-in" id="askHref" value="${esc(a.action.type === 'link' ? a.action.href : '')}" placeholder="https://… or mailto:…"><label class="check" style="margin:6px 0 0"><input type="checkbox" id="askNew" ${a.action.newTab ? 'checked' : ''}> In a new tab</label>`) +
-      opt('ac', 'popup', a.action.type, 'Opens a popup (new UI)', 'Click the component it should open:',
-        comps.list.length ? `<div class="st-pick">${comps.list.map(x => `<button type="button" data-pop="${x.id}" class="${a.action.compId === x.id ? 'on' : ''}"><div class="th" data-th="${x.id}"></div><span>${esc(x.name)}</span></button>`).join('')}</div>` : '<span>(save a component first)</span>') +
-      opt('ac', 'top', a.action.type, 'Scrolls back to the top', '') +
-      opt('ac', 'none', a.action.type, 'Nothing yet', 'Decide later.');
-  } else if (a.step === 'opener') {
-    q = 'Which button opens it?';
-    body = `<p class="help">Click the button on your page that should open “${esc(c.name)}”.</p>${a.opener ? `<p class="st-muted">Chosen: ${esc(quote(a.opener.info.label))}</p>` : ''}
-      <button class="primary" id="askPickBtn" style="width:100%">👆 Click it on the page</button>`;
-  } else {
-    q = 'Is that right?';
-    const e = askToEdit(a);
-    body = `<div class="st-sum">${esc(e.summary)}</div>
-      ${c && isClicky(k) && a.place !== 'popup' ? `<label class="check"><input type="checkbox" id="askAll" ${a.allBtns ? 'checked' : ''}> Also make all my other buttons look like this one</label>` : ''}`;
-  }
-  const last = a.step === 'confirm';
-  side.innerHTML = `<div class="bx-h"><h3>${a.inner ? `Linking ${esc(quote(a.inner.label))}` : a.editing ? 'Change it' : c ? `Adding “${esc(c.name)}”` : `Your ${kn}`}</h3><button class="icon" id="askX" title="Cancel">✕</button></div>
-    <div class="wz-steps">${steps.map((s, j) => `<i class="${j <= i ? 'on' : ''}"></i>`).join('')}</div>
-    <div class="bx-pad wz st-ask"><h4>${q}</h4>${body}</div>
-    <div class="wz-foot">${i > 0 ? '<button class="ghost" id="askBack">← Change</button>' : '<span></span>'}
-      <button class="primary" id="askNext" ${a.step === 'opener' && !a.opener ? 'disabled' : ''}>${last ? 'Yes, do it' : 'Next →'}</button></div>`;
-
-  $('askX').onclick = () => { S.ask = null; S.picking = null; renderEditorWs(); };
-  if ($('askBack')) $('askBack').onclick = () => { readAsk(); a.step = steps[Math.max(0, i - 1)]; if (S.picking) { S.picking = null; renderEditorWs(); } else renderSideStudio(); };
-  $('askNext').onclick = () => {
-    readAsk();
-    if (a.step === 'click' && a.action.type === 'popup' && !a.action.compId) { toast('Click the component it should open'); return; }
-    if (a.step === 'click' && a.action.type === 'link' && !a.action.href) { toast('Type the web address'); return; }
-    if (a.step === 'words' && a.words === 'new' && !a.text.trim()) { toast('Type what it should say'); return; }
-    if (last) return finishAsk();
-    const ns = askSteps(a); a.step = ns[ns.indexOf(a.step) + 1] || 'confirm';
-    if (a.step === 'opener' && !a.opener) { S.picking = 'opener'; renderEditorWs(); return; }
-    renderSideStudio();
-  };
-  if ($('askPickBtn')) $('askPickBtn').onclick = () => { S.picking = 'opener'; renderEditorWs(); };
-  side.querySelectorAll('.opt input[type=radio]').forEach(r => r.onchange = () => { readAsk(); renderSideStudio(); });
-  side.querySelectorAll('[data-sz]').forEach(b => b.onclick = e => { e.preventDefault(); a.layout.size = b.dataset.sz; renderSideStudio(); });
-  side.querySelectorAll('[data-pop]').forEach(b => b.onclick = e => { e.preventDefault(); a.action.type = 'popup'; a.action.compId = b.dataset.pop; renderSideStudio(); });
-  side.querySelectorAll('[data-th]').forEach(th => { const x = compById(th.dataset.th); const f = document.createElement('iframe'); f.setAttribute('sandbox', 'allow-scripts'); f.setAttribute('loading', 'lazy'); f.srcdoc = compThumbDoc(x); th.appendChild(f); const fit = () => { if (th.clientWidth) f.style.transform = `scale(${th.clientWidth / 600})`; }; fit(); new ResizeObserver(fit).observe(th); });
-  ['askHref', 'askText'].forEach(id => { const el = $(id); if (el) el.onfocus = () => { const r = el.closest('.opt').querySelector('input[type=radio]'); if (!r.checked) { r.checked = true; readAsk(); } }; });
-  if ($('askSec')) $('askSec').onchange = () => { const r = $('askSec').closest('.opt').querySelector('input[type=radio]'); r.checked = true; readAsk(); };
-}
-function readAsk() {
-  const a = S.ask, val = n => { const r = document.querySelector(`#stSide input[name=${n}]:checked`); return r && r.value; };
-  if (a.step === 'place') a.place = val('pl') || a.place;
-  if (a.step === 'layout') { const f = val('lf'); if (f) a.layout.flow = f === 'flow'; if ($('askRc')) a.recolor = $('askRc').checked; }
-  if (a.step === 'words') { a.words = val('wd') || a.words; if ($('askText')) a.text = $('askText').value; if ($('askRc')) a.recolor = $('askRc').checked; }
-  if (a.step === 'click') {
-    a.action.type = val('ac') || a.action.type;
-    if ($('askSec')) a.action.block = $('askSec').value;
-    if ($('askHref')) { if (a.action.type === 'link') a.action.href = $('askHref').value.trim(); a.action.newTab = $('askNew').checked; }
-    if (a.action.type === 'keep') a.action.href = a.info.href;
-  }
-  if (a.step === 'confirm' && $('askAll')) a.allBtns = $('askAll').checked;
-}
-// the answers → one change to the page (or a section block)
-function askToEdit(a) {
-  const c = a.compId && compById(a.compId), k = a.addr.kind;
-  if (a.inner) {
-    const host = compById((editById(a.inner.editId) || {}).compId) || { name: 'the component' };
-    return { inner: true, summary: `When someone clicks ${quote(a.inner.label)} in “${host.name}”, it ${actionWords(a.action.type === 'none' ? null : a.action)}. Its own effect still happens too.` };
-  }
-  if (a.place === 'popup') {
-    const o = a.opener;
-    return { popup: true, summary: o ? `When someone clicks ${quote(o.info.label)}, “${c.name}” pops up on top of the page.` : `“${c.name}” pops up when a button is clicked.` };
-  }
-  // words only go into a component that takes a button's / link's place
-  const text = !c || a.place === 'action' || !isClicky(k) ? null : a.words === 'old' ? (a.info.label || null) : a.words === 'new' ? a.text.trim() : null;
-  const action = isClicky(k) || a.place === 'action' ? (a.action.type === 'none' ? null : { ...a.action }) : null;
-  const e = { id: a.editing || newEditId(), target: a.addr, targetLabel: a.info.label || '', targetHref: a.info.href || '', mode: a.place, compId: c ? c.id : null, text, recolor: a.recolor, action,
-    layout: c && !isClicky(k) && a.place !== 'action' ? { ...a.layout } : undefined };
-  if (k === 'section') e.targetLabel = blockLabel(a.addr.scope);
-  return { edit: e, summary: describeEdit(e) };
-}
-function finishAsk() {
-  const a = S.ask, p = B.project, edits = projectEdits(), r = askToEdit(a), c = a.compId && compById(a.compId);
-  if (r.inner) {
-    const ed = editById(a.inner.editId), links = ed.links || (ed.links = []), i = links.findIndex(l => l.path === a.inner.path);
-    const link = { path: a.inner.path, label: a.inner.label, action: { ...a.action } };
-    if (a.action.type === 'none') { if (i >= 0) links.splice(i, 1); } else if (i >= 0) links.splice(i, 1, link); else links.push(link);
-    S.sel = { editId: ed.id };
-    toast(a.action.type === 'none' ? 'Link removed' : 'Done — ' + r.summary.split('. Its own')[0], 4000);
-  } else if (r.popup) {
-    const o = a.opener, ex = o.editId ? editById(o.editId) : edits.find(e => sameAddr(e.target, o.addr) && e.mode !== 'after');
-    const action = { type: 'popup', compId: c.id };
-    if (ex) ex.action = action;
-    else edits.push({ id: newEditId(), target: o.addr, targetLabel: o.info.label, targetHref: o.info.href, mode: 'action', compId: null, text: null, recolor: a.recolor, action });
-    toast(`Done — ${quote(o.info.label)} now opens “${c.name}”`);
-  } else {
-    const e = r.edit;
-    const prev = a.editing && editById(a.editing); if (prev && prev.links) e.links = prev.links;
-    if (a.replacing) { const i = edits.findIndex(x => x.id === a.replacing); if (i >= 0) edits.splice(i, 1); }
-    const i = edits.findIndex(x => x.id === e.id || (e.mode !== 'after' && sameAddr(x.target, e.target) && x.mode !== 'after'));
-    if (i >= 0) edits.splice(i, 1, e); else edits.push(e);
-    if (a.allBtns && c && c.tokens && c.tokens.btn) { p.btnCss = btnCssFrom(c.tokens.btn); p.btnFrom = c.id; }
-    S.sel = { editId: e.id };
-    toast('Done — ' + r.summary.replace(/\.$/, ''), 4000);
-  }
-  S.ask = null; S.picking = null;
-  saveProject();
-  renderStudio();
-}
-
-// side panel when nothing is being asked: what you clicked on, and what you can do with it
-// a placed component's own settings (its props), just for this placement
-function renderPropsSide() {
-  const side = $('stSide'), f = S.propsFor, owner = f.editId ? editById(f.editId) : blockById(f.blockId), c = owner && compById(owner.compId);
-  if (!owner || !c) { S.propsFor = null; return renderSelInfo(); }
-  side.innerHTML = `<div class="bx-h"><h3>⚙ ${esc(c.name)} <small>· just here</small></h3><button class="icon" id="ppX" title="Close">✕</button></div>
-    <div class="bx-pad"><div id="ppSide"></div><p class="st-muted" style="margin-top:10px">To change it everywhere it’s used, open it in the Library.</p></div>`;
-  $('ppX').onclick = () => { S.propsFor = null; renderSideStudio(); };
-  renderPropsPanel($('ppSide'), c, owner, () => { if (S.mode === 'blocks') renderBuildPreview(); else renderStudioPreview(); });
-}
-const hasProps = c => !!(c && typeof parseProps === 'function' && parseProps(c) && parseProps(c).fields.length);
-function renderSelInfo() {
-  const side = $('stSide'), t = S.sel;
-  if (S.propsFor) return renderPropsSide();
-  if (t && (t.inner || (t.addr && t.addr.kind === 'node'))) return renderDetail(t);
-  if (!t) {
-    side.innerHTML = `<div class="bx-h"><h3>How it works</h3></div><div class="bx-pad st-how">
-      <ol><li><b>Drag</b> a component from the left onto a button, heading, picture, card or section of your page.</li>
-      <li>Answer a couple of questions — is it new or replacing something? what happens when it’s clicked?</li>
-      <li>Check the sentence, then <b>Yes, do it</b>. Studio writes the code.</li></ol>
-      <p class="st-muted">Or click any button on your page to change what it does.</p></div>`;
-    return;
-  }
-  if (t.editId) {
-    const e = editById(t.editId); if (!e) { S.sel = null; return renderSelInfo(); }
-    side.innerHTML = `<div class="bx-h"><h3>Your change</h3><button class="icon" id="selX">✕</button></div><div class="bx-pad">
-      <div class="st-sum">${esc(describeEdit(e))}</div>
-      <div style="display:grid;gap:8px">
-        ${isClicky(e.target.kind) || e.mode === 'action' ? '<button class="primary" id="selAct">Change what it does when clicked</button>' : ''}
-        ${e.compId && !isClicky(e.target.kind) ? `<div class="st-lay"><b>Tile size</b>${sizeChips((e.layout || {}).size || 'auto', 'data-tsz')}
-          <label class="check"><input type="checkbox" id="selFlow" ${(e.layout || { flow: true }).flow ? 'checked' : ''}> Rearrange the page around it</label></div>` : ''}
-        ${hasProps(compById(e.compId)) ? '<button class="primary" id="selProps">⚙ Component settings</button>' : ''}
-        ${e.compId && !isClicky(e.target.kind) ? '<button class="primary" id="selDetail">✎ Edit it in detail</button>' : ''}
-        ${e.compId ? '<button class="ghost" id="selEdit">Change the rest</button>' : ''}
-        ${e.compId && !isClicky(e.target.kind) && e.mode !== 'action' ? `<div class="st-lay"><b>Linked parts</b>
-          ${(e.links || []).map((l, i) => `<div class="st-link"><button class="st-chg" data-lk="${i}">${esc(quote(l.label))} → ${esc(actionWords(l.action))}</button><button class="icon" data-lkx="${i}" title="Remove this link">✕</button></div>`).join('') || '<p class="st-muted">Folders, files, menu items or buttons inside it can each scroll to a section, open a page or pop something up.</p>'}
-          <button class="primary" id="selLink">🔗 Link a part of it</button></div>` : ''}
-        <button class="ghost" id="selDel" style="color:#b2341a">Undo this change</button></div>
-      <p class="st-muted" style="margin-top:12px">Tip: drop another component on it to swap it.</p></div>`;
-    stPost({ rkHi: { editId: e.id } });
-    if ($('selAct')) $('selAct').onclick = () => openLinksFor(e.target, e.text || e.targetLabel);
-    if ($('selEdit')) $('selEdit').onclick = () => startAsk({ editing: e.id });
-    if ($('selDetail')) $('selDetail').onclick = () => focusOn({ editId: e.id });
-    if ($('selProps')) $('selProps').onclick = () => { S.propsFor = { editId: e.id }; renderSideStudio(); };
-    const relayout = ch => { e.layout = { flow: true, size: 'auto', ...(e.layout || {}), ...ch }; saveProject(); renderSelInfo(); renderStudioPreview(); };
-    side.querySelectorAll('[data-tsz]').forEach(b => b.onclick = () => relayout({ size: b.dataset.tsz, flow: true }));
-    if ($('selFlow')) $('selFlow').onchange = ev => relayout({ flow: ev.target.checked });
-    if ($('selLink')) $('selLink').onclick = () => { S.innerPick = e.id; S.tryIt = false; renderEditorWs(); };
-    side.querySelectorAll('[data-lk]').forEach(b => b.onclick = () => {
-      const l = e.links[+b.dataset.lk];
-      S.ask = { inner: { editId: e.id, path: l.path, label: l.label }, compId: null, addr: e.target, info: { kind: 'button', label: l.label, href: '' },
-        place: 'action', step: 'click', recolor: !!e.recolor, layout: { flow: true, size: 'auto' }, action: structuredClone(l.action) };
-      renderSideStudio();
-    });
-    side.querySelectorAll('[data-lkx]').forEach(b => b.onclick = () => { e.links.splice(+b.dataset.lkx, 1); saveProject(); renderSelInfo(); renderStudioPreview(); toast('Link removed'); });
-    $('selDel').onclick = () => { B.project.edits = B.project.edits.filter(x => x.id !== e.id); S.sel = null; saveProject(); toast('Change undone'); renderStudio(); };
-  } else {
-    const k = t.addr.kind, kn = KIND_NAMES[k], lbl = t.info && t.info.label;
-    side.innerHTML = `<div class="bx-h"><h3>${k === 'section' ? esc(blockLabel(t.addr.scope)) : `Your ${kn}`}</h3><button class="icon" id="selX">✕</button></div><div class="bx-pad">
-      ${lbl && k !== 'section' ? `<p class="st-sum">${esc(quote(lbl))}${isClicky(k) && t.info.href ? ` — goes to ${esc(t.info.href)}` : ''}</p>` : ''}
-      <div style="display:grid;gap:8px">
-        ${t.addr.scope !== 'nav' && t.addr.scope !== 'footer' ? '<button class="primary" id="selDetail">✎ Edit this section in detail</button>' : ''}
-        ${k === 'section' && hasProps(compById((blockById(t.addr.scope) || {}).compId)) ? '<button class="primary" id="selProps">⚙ Component settings</button>' : ''}
-        ${k === 'section' && (blockById(t.addr.scope) || {}).kind === 'comp' ? '<button class="ghost" id="selRemove" style="color:#b2341a">Remove this component</button>' : ''}
-        ${isClicky(k) ? '<button class="primary" id="selAct">Change what it does when clicked</button>' : ''}
-        ${k === 'section' ? '<button class="ghost" id="selBuild">Move, hide or schedule it (Blocks)</button>' : ''}</div>
-      <p class="st-muted" style="margin-top:12px">Drag a component from the left onto it to ${k === 'section' ? 'replace it or add something below' : 'replace it'}.</p></div>`;
-    if ($('selAct')) $('selAct').onclick = () => openLinksFor(t.addr, t.info && t.info.label);
-    if ($('selBuild')) $('selBuild').onclick = () => { B.sel = t.addr.scope; S.mode = 'blocks'; renderStudio(); };
-    if ($('selDetail')) $('selDetail').onclick = () => focusOn(t);
-    if ($('selRemove')) $('selRemove').onclick = () => removeBlock(t.addr.scope);
-    if ($('selProps')) $('selProps').onclick = () => { S.propsFor = { blockId: t.addr.scope }; renderSideStudio(); };
-  }
-  $('selX').onclick = () => { S.sel = null; stPost({ rkHi: null }); renderSelInfo(); };
-}
 
 /* ------------------------------------------------------------------ hook into the app */
 VIEWS.studio = renderStudio;

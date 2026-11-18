@@ -553,9 +553,8 @@ function renderCompView() {
 async function addVariantToSite(c, v) {
   if (!state.model) { toast('Paste your site at the top first'); return; }
   await ensureCompTokens(c);
-  const o = v ? v.opts : { fill: 'own' };
-  B.pendingWizard = { compId: c.id, fill: o.fill === 'own' ? 'own' : 'custom', recolor: !!o.recolor };
-  setView('build');
+  // one stage: open Studio with it glowing in the rail — drag it where you want it
+  S.flash = c.id; setView('studio'); toast(`Drag “${c.name}” from the rail onto your page`, 4000);
 }
 
 /* ------------------------------------------------------------------ hook into the app's tabs */

@@ -1,25 +1,20 @@
 # Reskin
 
-Paste your site — see it reimagined. Your content stays the same; only the design changes.
+Paste your site — see it reimagined. See a component you like — drag it onto your site. Easy as pie.
 
-Three tabs — a journey, not a sitemap:
-
-- **Explore** — the landing: paste your site (and, optionally, a design you love), press **Generate**.
-- **Studio** — the stage: your page in the middle, a **filmstrip** of generated styles underneath (click one to
-  put it on; ♡ to keep it; *More like this*, *Shuffle*, moods). **Reskin itself wears the style you pick** —
-  its colours and fonts follow your page (◐ in the header turns that off). Three modes:
-  - **Edit** — drag (or click, then click the page) a component onto any button, heading, picture, card or
-    section; plain questions, a one-sentence check, done. Components become **bento tiles** that the page
-    reflows around (or *keep everything where it is*). **Right-click** anything for *Edit text* (or double-click
-    to type right on the page), *Configure…*, *Replace with a component…*, *Link to…*, *Hide*, *Undo*.
-  - **Blocks** — the page as a stack of parts: drag to reorder, hide, add, and *when it shows* rules.
-  - **🔗 Links** — a node view: wire buttons and the parts inside components (folders, files, menu items) to
-    sections, popups or web pages.
-  - **⚙** — page settings: colour palette, hero type, which images go where.
-- **Library** — everything you keep: saved styles and components (by link from uiverse / MUI / 21st.dev, pasted
-  code, or files). **✂ Grab from a page**: open any saved page, click the part you want (Bigger / Smaller to
-  adjust) and save it as a component, with its look, fonts and images. **Import icons (.zip)** turns a zip of
-  SVGs into an icon collection. Click a component for its own page: preview, variations, add to your site.
+- **Explore** — paste your site (and, optionally, a design you love), press **Generate**.
+- **Studio** — one stage: your page, your components beside it, styles underneath.
+  - **Drag a component onto your page.** While you drag, the page shows what will happen: *Replace "Shop now"*
+    over a button (it keeps that button's words and link), *Add it here* over a card or picture, or a line with
+    *New section here* between sections. Drop, and it's placed — with **Undo**.
+  - **Get components in** by pasting a link (uiverse, 21st.dev, MUI, GitHub) or code, uploading a file, or
+    dropping a file, a picture or a component's link from another tab straight onto your page.
+  - Components keep working on the stage. Point at one for **Swap · Size · Remove**. Double-click any words to
+    edit them; right-click to hide or show.
+  - The **filmstrip** restyles your page — and Reskin itself wears the style you pick (◐ turns that off).
+    **⚙** holds colour palette, hero type and images.
+- **Library** — styles and components you keep, sorted into categories. **✂ Grab from a page** saves a part of
+  any saved page as a component; **Import icons (.zip)** adds an icon set.
 
 Everything runs in your browser; pages are rendered in sandboxed frames.
 
@@ -30,8 +25,8 @@ Everything runs in your browser; pages are rendered in sandboxed frames.
 | `index.html` | the page and its styles |
 | `engine.js` | content extraction, sandbox, animated remix engine, style generator, renderer |
 | `app.js` | Explore, styles, the component library, page settings |
-| `builder.js`, `builder.css` | component page, the Blocks editor; `composeDoc` builds the finished page |
-| `studio.js`, `studio.css` | Studio stage: filmstrip, Edit / Blocks / Links, bento tiles, click actions, popups, right-click menu |
+| `builder.js`, `builder.css` | component page; `composeDoc` builds the finished page |
+| `studio.js`, `studio.css` | Studio stage: drag-and-drop with live preview, placing + Undo, hover toolbar, filmstrip; the in-page runtime |
 | `shell.js` | the three tabs, Library, ⚙ sheet, the app wearing your style, grab-from-a-page, icon zips |
 | `serve.py` | local server + link-import proxy |
 | `cloud.js`, `config.js` | optional Supabase accounts and sync |
