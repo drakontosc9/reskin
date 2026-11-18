@@ -181,6 +181,43 @@ function __rkElem(D) {
     if (!t && D.mode === 'fit') return;
     e.preventDefault(); parent.postMessage({ rkAct: D.id }, '*');
   }, true);
+  document.addEventListener('contextmenu', function (e) { if (WORDS) return; e.preventDefault(); parent.postMessage({ rkElCtx: D.id, x: e.clientX, y: e.clientY }, '*'); }, true);
+  var WORDS = false, wEl = null, wWas = '';
+  var wst = document.createElement('style');
+  wst.textContent = '[data-rk-w]{outline:2px dashed #2f6bff!important;outline-offset:2px;cursor:text!important}[contenteditable=true][data-rk-wed]{outline:2px solid #2f6bff!important;outline-offset:2px}';
+  (document.head || document.documentElement).appendChild(wst);
+  function ownText(el) { for (var n = el.firstChild; n; n = n.nextSibling) if (n.nodeType === 3 && n.nodeValue.trim()) return true; return false; }
+  function wordsAt(t) { for (var x = t; x && x.nodeType === 1 && x !== document.body; x = x.parentElement) if (ownText(x)) return x; return null; }
+  function wordsDone(save) {
+    var el = wEl; if (!el) return; wEl = null; el.contentEditable = 'false'; el.removeAttribute('data-rk-wed');
+    var t = el.innerText.replace(/\s+/g, ' ').trim();
+    if (!save || !t) { el.innerText = wWas; return; }
+    if (t !== wWas.trim()) {
+      var it = { path: pathOf(el), label: wWas.trim().slice(0, 40), text: t }, at = -1;
+      INNER.forEach(function (x, i) { if (x.path === it.path) at = i; }); if (at >= 0) INNER[at].text = t; else INNER.push(it);
+      parent.postMessage({ rkElWords: D.id, item: it }, '*');
+    }
+  }
+  function wordsMode(on) {
+    WORDS = on; if (!on) { wordsDone(true); document.querySelectorAll('[data-rk-w]').forEach(function (x) { x.removeAttribute('data-rk-w'); }); }
+  }
+  document.addEventListener('mouseover', function (e) {
+    if (!WORDS) return; document.querySelectorAll('[data-rk-w]').forEach(function (x) { x.removeAttribute('data-rk-w'); });
+    var el = wordsAt(e.target); if (el && el !== wEl) el.setAttribute('data-rk-w', '');
+  }, true);
+  document.addEventListener('click', function (e) {
+    if (!WORDS) return; e.preventDefault(); e.stopPropagation();
+    var el = wordsAt(e.target); if (!el || el === wEl) return;
+    wordsDone(true); wEl = el; wWas = el.innerText; el.removeAttribute('data-rk-w'); el.setAttribute('data-rk-wed', '');
+    el.contentEditable = 'true'; el.focus();
+    var r = document.createRange(); r.selectNodeContents(el); var sl = getSelection(); sl.removeAllRanges(); sl.addRange(r);
+  }, true);
+  document.addEventListener('keydown', function (e) {
+    if (!WORDS) return;
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); wordsDone(true); }
+    if (e.key === 'Escape') { e.preventDefault(); if (wEl) wordsDone(false); else { wordsMode(false); parent.postMessage({ rkElWordsEnd: D.id }, '*'); } }
+  }, true);
+  addEventListener('message', function (e) { var d = e.data || {}; if ('rkWords' in d) wordsMode(!!d.rkWords); });
   addEventListener('load', function () { label(); applyAllInner(); report(); });
   addEventListener('resize', function () { setTimeout(report, 60); });
   // frameworks may re-render after load: keep re-applying the edits for a while, then on every change
@@ -383,7 +420,9 @@ function __rkStudio(EDITS, MODE) {
       return;
     }
     if (e.doc && e.inline) {
-      var w = cropFrame(e, el);
+      var w = cropFrame(e, el), row = el.parentNode;
+      // a tall component in a row of buttons shouldn't stretch its neighbours
+      if (row && row.nodeType === 1 && /flex|grid/.test(getComputedStyle(row).display)) row.style.alignItems = 'center';
       if (e.mode === 'replace') { el.parentNode.insertBefore(w, el); el.style.display = 'none'; }
       else el.parentNode.insertBefore(w, el.nextSibling);
     } else if (e.doc) {
@@ -431,6 +470,18 @@ function __rkStudio(EDITS, MODE) {
   addEventListener('message', function (ev) {
     var d = ev.data || {};
     if (d.rkE) onReport(d);
+    if (d.rkElCtx || d.rkElWords || d.rkElWordsEnd) {
+      var id = d.rkElCtx || d.rkElWords || d.rkElWordsEnd, k = F[id]; if (!k) return;
+      if (d.rkElWords) return parent.postMessage({ rkInnerWords: { editId: id, item: d.item } }, '*');
+      if (d.rkElWordsEnd) { (k.tile || k.wrap).classList.remove('rk-wording'); return; }
+      var r = k.f.getBoundingClientRect(), sc = r.width / (k.f.offsetWidth || r.width);
+      parent.postMessage({ rkCtx: { addr: null, info: null, editId: id }, x: r.left + d.x * sc, y: r.top + d.y * sc }, '*');
+    }
+    if (d.rkWordsIn) {   // "Change its words": that component's words become clickable; everything else stays put
+      Object.keys(F).forEach(function (id) { var k = F[id], on = id === d.rkWordsIn; if (k.f.contentWindow) k.f.contentWindow.postMessage({ rkWords: on }, '*'); (k.tile || k.wrap).classList.toggle('rk-wording', on); });
+      var w = document.querySelector('[data-rk-edit="' + d.rkWordsIn + '"]'); if (w) goTo(w, 'center');
+    }
+    if (d.rkWordsOff) Object.keys(F).forEach(function (id) { var k = F[id]; if (k.f.contentWindow) k.f.contentWindow.postMessage({ rkWords: false }, '*'); (k.tile || k.wrap).classList.remove('rk-wording'); });
     if (d.rkAct && byId[d.rkAct]) {
       var be = byId[d.rkAct];
       if (d.link != null) { var l = (be.links || [])[d.link]; if (l) run({ id: be.id + '-' + d.link, action: l.action, popDoc: l.popDoc }); }
@@ -443,6 +494,7 @@ function __rkStudio(EDITS, MODE) {
     '.rk-bento{display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr))!important;grid-auto-rows:minmax(150px,auto)!important;grid-auto-flow:row dense!important;gap:20px!important;align-items:stretch!important}' +
     '.rk-bento>*{min-width:0!important;margin:0!important;grid-column:span 1}.rk-bento-row>.rk-bento{margin:28px 0}' +
     '.rk-tile{position:relative;overflow:hidden;border-radius:var(--r,14px);min-height:150px}' +
+    '.rk-wording{outline:3px solid #2f6bff!important;outline-offset:4px}' +
     '.rk-empty{position:absolute;inset:10px;display:grid;place-items:center;text-align:center;padding:14px;border:2px dashed #c9c2b8;border-radius:12px;background:rgba(250,248,245,.94);color:#57524b;font:500 13px/1.45 Inter,system-ui,sans-serif}' +
     '.rk-bento>.rk-c1{grid-column:span 1}.rk-bento>.rk-c2{grid-column:span 2}.rk-bento>.rk-c4{grid-column:1/-1}' +
     '.rk-bento>.rk-r1{grid-row:span 1}.rk-bento>.rk-r2{grid-row:span 2}.rk-bento>.rk-r3{grid-row:span 3}.rk-bento>.rk-r4{grid-row:span 4}' +
@@ -483,6 +535,7 @@ function __rkStudio(EDITS, MODE) {
     '.rk-tag{position:fixed;z-index:2147483001;pointer-events:none;font:600 11.5px/1 Inter,system-ui,sans-serif;background:#1d1b19;color:#fff;padding:5px 8px;border-radius:6px;display:none}';
   document.head.appendChild(sst);
   var ol = mk('rk-ol'), line = mk('rk-line'), pill = mk('rk-pill'), bar = mk('rk-bar'), tag = mk('rk-tag');
+  setTimeout(function () { parent.postMessage({ rkReady: true }, '*'); }, 0);
   function plain(t) { return t ? { addr: t.addr || null, info: t.info || null, editId: t.editId || null } : null; }
   function blocksOnPage() { return Array.prototype.filter.call(document.querySelectorAll('.rk-block'), function (b) { return b.offsetHeight > 0; }); }
   var clicky = function (k) { return k === 'button' || k === 'link'; };
@@ -555,7 +608,7 @@ function __rkStudio(EDITS, MODE) {
     bar.style.display = 'flex'; bar.style.left = Math.max(6, Math.min(r.right - bar.offsetWidth - 6, innerWidth - bar.offsetWidth - 6)) + 'px'; bar.style.top = Math.max(6, r.top + 8) + 'px';
   }
   document.addEventListener('mouseover', function (ev) {
-    if (document.body.classList.contains('rk-dragging')) return;
+    if (document.body.classList.contains('rk-dragging') || document.querySelector('.rk-wording')) return;
     if (bar.contains(ev.target)) { clearTimeout(barT); return; }
     var bx = boxOf(ev.target);
     if (bx) { clearTimeout(barT); showBar(bx); } else { clearTimeout(barT); barT = setTimeout(hideBar, 350); }
@@ -614,6 +667,17 @@ function __rkStudio(EDITS, MODE) {
   addEventListener('message', function (ev) {
     var d = ev.data || {};
     if ('rkDragging' in d) dragging(d.rkDragging);
+    // carried in from the Library: the app sends where the pointer is; show where it would land, and drop it there
+    if ('rkCarry' in d) {
+      if (!d.rkCarry) { dragging(false); return; }
+      dragging(true); clearTimeout(dragT);
+      showDrop(intentAt(d.rkCarry.x, d.rkCarry.y, document.elementFromPoint(d.rkCarry.x, d.rkCarry.y)));
+    }
+    if (d.rkCarryDrop) {
+      var p = d.rkCarryDrop, it = intentAt(p.x, p.y, document.elementFromPoint(p.x, p.y)); dragging(false);
+      parent.postMessage({ rkDrop: it ? { kind: it.kind, addr: it.addr || null, info: it.info || null, editId: it.editId || null, scope: it.scope || null } : null, carried: true }, '*');
+    }
+    if (d.rkScrollBy) scrollBy(0, d.rkScrollBy);
     if (d.rkEditText) { var te = find(d.rkEditText); if (te) startText(te, d.rkEditText); }
     if ('rkHi' in d) {
       var el = null, h = d.rkHi;
@@ -900,6 +964,84 @@ async function importDropped(files, text) {
 }
 
 function stPost(msg) { const f = $('stFrame') && $('stFrame').querySelector('iframe'); if (f && f.contentWindow) f.contentWindow.postMessage(msg, '*'); }
+/* ---- carry a component from the Library to your page: press and hold a card, it comes with you to Studio ----
+   The stage is a sandboxed frame, so while carrying it ignores the pointer and the app tells it where the pointer
+   is; the page shows the same live preview as a drag from the rail. */
+const CARRY = { id: null, ghost: null, hint: null, scroll: 0, iv: 0, at: null, ready: false, drop: null };
+function stageRect() { const f = $('stFrame') && $('stFrame').querySelector('iframe'); return f ? f.getBoundingClientRect() : null; }
+function startCarry(c, x, y) {
+  if (CARRY.id) endCarry();
+  CARRY.id = c.id; S.drag = c.id;
+  const g = CARRY.ghost = document.createElement('div'); g.className = 'carry-ghost';
+  g.innerHTML = `<b>${esc(c.name)}</b><span>Drop it on your page</span>`;
+  document.body.appendChild(g); moveGhost(x, y);
+  document.body.classList.add('carrying');
+  CARRY.ready = state.view === 'studio' && !!stageRect();
+  if (state.view !== 'studio') setView('studio');
+  let seen = false; try { seen = !!localStorage.getItem('reskin.carryTip'); localStorage.setItem('reskin.carryTip', '1'); } catch {}
+  if (seen) return carryListen();
+  const h = CARRY.hint = document.createElement('div'); h.className = 'carry-hint';
+  h.innerHTML = 'On a button: <b>replaces it</b> · on a card or heading: <b>sits beside it</b> · between sections: <b>a full-width row</b> · <kbd>Esc</kbd> to cancel';
+  document.body.appendChild(h); setTimeout(() => h.classList.add('fade'), 6000);
+  carryListen();
+}
+function carryListen() {
+  addEventListener('blur', carryCancel); addEventListener('pointercancel', carryCancel, true);
+  addEventListener('pointermove', carryMove, true); addEventListener('pointerup', carryUp, true);
+  addEventListener('wheel', carryWheel, { capture: true, passive: false }); addEventListener('keydown', carryKey, true);
+  CARRY.iv = setInterval(() => { if (CARRY.scroll) stPost({ rkScrollBy: CARRY.scroll }); }, 16);
+}
+function moveGhost(x, y) { if (CARRY.ghost) CARRY.ghost.style.transform = `translate(${x + 14}px,${y + 14}px)`; }
+function carryMove(e) {
+  moveGhost(e.clientX, e.clientY);
+  const r = stageRect(), on = r && e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+  CARRY.at = on ? { x: e.clientX - r.left, y: e.clientY - r.top } : null;
+  if (CARRY.ghost) CARRY.ghost.classList.toggle('over', !!on);
+  stPost({ rkCarry: CARRY.at });
+  // near the top or bottom of the stage, the page scrolls by itself
+  const EDGE = 70; CARRY.scroll = on ? (CARRY.at.y < EDGE ? -Math.ceil((EDGE - CARRY.at.y) / 5) : CARRY.at.y > r.height - EDGE ? Math.ceil((CARRY.at.y - (r.height - EDGE)) / 5) : 0) : 0;
+}
+function carryWheel(e) { if (!CARRY.at) return; e.preventDefault(); stPost({ rkScrollBy: e.deltaY }); setTimeout(() => stPost({ rkCarry: CARRY.at }), 30); }
+function carryCancel() { if (!CARRY.id) return; stPost({ rkCarry: null }); endCarry(); toast('Put back'); }
+function carryKey(e) { if (e.key === 'Escape') { e.preventDefault(); carryCancel(); } }
+function carryUp() {
+  if (!CARRY.id) return;
+  if (CARRY.at) {
+    CARRY.scroll = 0; clearInterval(CARRY.iv); CARRY.drop = CARRY.at;
+    if (CARRY.ghost) CARRY.ghost.classList.add('landing');
+    if (CARRY.ready) stPost({ rkCarryDrop: CARRY.drop });   // otherwise it's sent the moment the page is ready
+    setTimeout(() => { if (CARRY.id) { endCarry(); toast('Your page didn’t load in time — try again'); } }, 8000);
+    return;
+  }
+  stPost({ rkCarry: null }); endCarry(); toast('Not placed — let go over your page to put it there');
+}
+function endCarry() {
+  removeEventListener('pointermove', carryMove, true); removeEventListener('pointerup', carryUp, true);
+  removeEventListener('wheel', carryWheel, true); removeEventListener('keydown', carryKey, true);
+  removeEventListener('blur', carryCancel); removeEventListener('pointercancel', carryCancel, true);
+  clearInterval(CARRY.iv); CARRY.scroll = 0;
+  if (CARRY.ghost) CARRY.ghost.remove(); if (CARRY.hint) CARRY.hint.remove();
+  document.body.classList.remove('carrying');
+  CARRY.id = CARRY.ghost = CARRY.hint = CARRY.at = CARRY.drop = null; CARRY.ready = false;
+}
+// press and hold (or press and move) on a card to pick it up; a plain click still opens it
+function makeCarryable(el, c, onClick) {
+  let t = 0, sx = 0, sy = 0, picked = false, down = false;
+  el.addEventListener('pointerdown', e => {
+    if (e.button !== 0 || e.target.closest('button,a,input,select,textarea,label')) return;
+    down = true; picked = false; sx = e.clientX; sy = e.clientY;
+    clearTimeout(t); t = setTimeout(() => { if (down) { picked = true; startCarry(c, sx, sy); } }, 280);
+  });
+  el.addEventListener('pointermove', e => {
+    if (!down || picked || e.pointerType === 'touch') return;
+    if (Math.hypot(e.clientX - sx, e.clientY - sy) > 8) { clearTimeout(t); picked = true; startCarry(c, e.clientX, e.clientY); }
+  });
+  const stop = () => { down = false; clearTimeout(t); };
+  el.addEventListener('pointerup', e => { const wasPicked = picked, was = down; stop(); if (was && !wasPicked && onClick && (!el.querySelector('.cthumb') || e.target.closest('.cthumb'))) onClick(); });
+  el.addEventListener('pointercancel', stop);
+  el.addEventListener('dragstart', e => e.preventDefault());   // no native image drag on the thumbnail
+}
+
 function renderStudioPreview() {
   const box = $('stFrame'); if (!box) return;
   const f = document.createElement('iframe');
@@ -913,8 +1055,13 @@ addEventListener('message', e => {
   const d = e.data || {};
   if (state.view !== 'studio' || !$('stFrame')) return;
   const f = $('stFrame').querySelector('iframe'); if (!f || e.source !== f.contentWindow) return;
-  if (d.rkDrop) {
+  if (d.rkReady) {   // a fresh stage (after a tab switch or a re-render): pick up where the carry is
+    if (CARRY.id) { CARRY.ready = true; if (CARRY.drop) stPost({ rkCarryDrop: CARRY.drop }); else if (CARRY.at) stPost({ rkCarry: CARRY.at }); }
+    return;
+  }
+  if ('rkDrop' in d) {
     const it = d.rkDrop; let compId = S.drag; S.drag = null;
+    if (d.carried) { endCarry(); if (!it) { toast('Drop it on a button, next to something, or between two sections'); return; } }
     (async () => { if (!compId) compId = await importDropped(d.files, d.text); if (compId) placeComp(compId, it); })();
     return;
   }
@@ -931,6 +1078,12 @@ addEventListener('message', e => {
       L.size = next; L.flow = true; saveProject(); renderStudioPreview(); toast('Size: ' + sizeName(next));
     }
     return;
+  }
+  if (d.rkInnerWords) {
+    const e = editById(d.rkInnerWords.editId), it = d.rkInnerWords.item; if (!e || !it) return;
+    const inner = e.inner || (e.inner = []), ex = inner.find(x => x.path === it.path);
+    if (ex) ex.text = it.text; else inner.push({ path: it.path, label: it.label, text: it.text });
+    saveProject(); toast(`Changed to “${it.text.slice(0, 40)}” · click more words, or Esc when done`); return;
   }
   if (d.rkText) { saveTextEdit(d.rkText.addr, d.rkText.text, d.rkText.was); return; }
   if (d.rkCtx) {
@@ -959,12 +1112,23 @@ function saveTextEdit(addr, text, was) {
   if (ex) ex.text = text; else edits.push({ id: newEditId(), target: addr, targetLabel: was || '', mode: 'text', text });
   saveProject(); toast(`Text changed to “${text.slice(0, 40)}”`);
 }
+// Esc in the app (focus may be outside the stage) also ends "change its words"
+function wordsEscape() {
+  addEventListener('keydown', function off(ev) { if (ev.key !== 'Escape') return; removeEventListener('keydown', off, true); stPost({ rkWordsOff: true }); }, true);
+}
 function ctxItems(t) {
   const edits = projectEdits(), items = [];
   if (t.editId) {
     const e = editById(t.editId), c = e && compById(e.compId), snap = snapshotPage();
-    if (c && isClicky(e.target.kind)) items.push({ label: 'Change its words', icon: '✎', run: () => { const v = prompt('What should it say?', e.text || e.targetLabel || ''); if (v != null && v.trim()) { e.text = v.trim(); saveProject(); renderStudioPreview(); } } });
-    if (c) items.push({ label: 'Swap for another component', icon: '⇄', run: () => { S.swapFor = { editId: e.id }; renderEditorWs(); } });
+    if (!c) return [{ label: 'Remove', icon: '✕', danger: true, run: () => { B.project.edits = edits.filter(x => x.id !== t.editId); saveProject(); renderEditorWs(); toastUndo('Removed', snap); } }];
+    // rework it, in place: its words, its colours; anything deeper lives on its Library page
+    if (isClicky(e.target.kind)) items.push({ label: 'Change its words', icon: '✎', run: () => { const v = prompt('What should it say?', e.text || e.targetLabel || ''); if (v != null && v.trim()) { e.text = v.trim(); saveProject(); renderStudioPreview(); } } });
+    else items.push({ label: 'Change its words', icon: '✎', hint: 'click the words, type', run: () => { stPost({ rkWordsIn: e.id }); toast('Click any words in it and type · Enter saves · Esc when done', 5000); wordsEscape(); } });
+    const canMatch = !!(pageAccent() && c.tokens && (c.tokens.accent || c.tokens.btnBg));
+    if (canMatch) items.push({ label: e.recolor ? 'Use its own colours' : 'Match my site’s colours', icon: '◐', run: () => { e.recolor = !e.recolor; saveProject(); renderStudioPreview(); toastUndo(e.recolor ? 'Now in your site’s colours' : 'Back to its own colours', snap); } });
+    if (parseProps(c) && parseProps(c).fields.length) items.push({ label: 'More options…', icon: '⚙', hint: 'in Library', run: () => { LIB.detail = c.id; setView('library'); } });
+    items.push('-');
+    items.push({ label: 'Swap for another component', icon: '⇄', run: () => { S.swapFor = { editId: e.id }; renderEditorWs(); } });
     items.push({ label: 'Remove', icon: '✕', danger: true, run: () => { B.project.edits = edits.filter(x => x.id !== t.editId); saveProject(); renderEditorWs(); toastUndo('Removed', snap); } });
     return items;
   }

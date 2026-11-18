@@ -364,3 +364,19 @@ input[type=color]::-moz-color-swatch{border:none;border-radius:6px}
 .undo-toast.show{opacity:1;transform:translate(-50%,0);pointer-events:auto}
 .undo-toast button{border:0;background:var(--accent);color:var(--accent-ink);font-weight:700;padding:7px 14px;border-radius:9px;cursor:pointer}
 @media (max-width:1100px){.st-ed.st-one{grid-template-columns:1fr}}
+
+/* ---- carrying a component from the Library to your page ---- */
+.ctile .cthumb iframe{pointer-events:none}
+.ctile.carryable{cursor:grab;user-select:none;touch-action:pan-y}
+body.carrying,body.carrying *{cursor:grabbing!important;user-select:none}
+body.carrying #stFrame iframe{pointer-events:none}
+body.carrying #stFrame{outline:2px dashed color-mix(in srgb,var(--accent) 55%,transparent);outline-offset:4px;border-radius:var(--app-r,14px)}
+.carry-ghost{position:fixed;left:0;top:0;z-index:9999;pointer-events:none;display:flex;flex-direction:column;gap:2px;padding:9px 13px;border-radius:12px;background:var(--ink);color:var(--bg);box-shadow:0 14px 34px rgba(0,0,0,.28);font:500 12px/1.3 var(--font-b,Inter,system-ui,sans-serif);transition:opacity .2s,scale .2s;rotate:-2deg;animation:carryUp .18s var(--ease,ease) both}
+.carry-ghost b{font-size:13.5px;font-weight:650;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.carry-ghost span{opacity:.7}
+.carry-ghost.over span{opacity:0}
+.carry-ghost.landing{opacity:0;scale:.6}
+@keyframes carryUp{from{scale:.7;opacity:0}}
+.carry-hint{position:fixed;left:50%;bottom:22px;translate:-50% 0;z-index:9998;pointer-events:none;padding:10px 16px;border-radius:999px;background:var(--panel);color:var(--ink);border:1px solid var(--line,#e5e0d8);box-shadow:0 10px 30px rgba(0,0,0,.14);font:500 13px/1.3 var(--font-b,Inter,system-ui,sans-serif);white-space:nowrap;max-width:calc(100vw - 32px);overflow:hidden;text-overflow:ellipsis;transition:opacity .5s}
+.carry-hint.fade{opacity:0}
+.carry-hint kbd{font:600 11px/1 ui-monospace,monospace;padding:2px 5px;border-radius:4px;background:var(--chip,#eee)}

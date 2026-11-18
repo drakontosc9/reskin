@@ -88,17 +88,23 @@ const injectEnd = (html, tag) => { const i = html.toLowerCase().lastIndexOf('</b
 // tells the page how tall the component's content is (not the frame: scrollHeight never drops below the frame's own height)
 const heightReporter = id => `<script>(function(){var id=${jsonForScript(id)},last=0;function send(){var b=document.body;if(!b)return;var cs=getComputedStyle(b),h=Math.ceil(b.getBoundingClientRect().height+parseFloat(cs.marginTop)+parseFloat(cs.marginBottom));if(h<20)h=document.documentElement.scrollHeight;if(Math.abs(h-last)>2){last=h;parent.postMessage({rkH:h,id:id},'*');}}addEventListener('load',send);setInterval(send,700);})();<\/script>`;
 
+// "your site's colour": the accent of the style the page wears now (falls back to the original brand colour)
+function pageAccent() {
+  const s = B.project && B.project.style, p = s && ((typeof withOverrides === 'function' ? withOverrides(s) : s).pal || s.pal), a = p && (p.accent || p.btnBg);
+  if (a) try { const c = Array.isArray(a) ? a : cssToRgb(a); if (c) return c; } catch {}
+  return brandColor();
+}
 // one component, filled and coloured for a spot on the site
 function compBlockDoc(comp, opts) {
   let html = compDoc(comp, opts.props);
   if (opts.fill !== 'own' && opts.content) {
     const from = comp.tokens && (comp.tokens.accent || comp.tokens.btnBg);
-    const to = opts.recolor ? brandColor() : null;
+    const to = opts.recolor ? pageAccent() : null;
     const data = { content: miniModel(opts.content), opts: { thumb: !!opts.thumb, recolor: from && to ? { from, to, mono: !comp.tokens.accent } : null } };
     html = injectEnd(html, `<script>(${__transplant})(${jsonForScript(data)});<\/script>`);
-  } else if (opts.recolor && brandColor() && comp.tokens && (comp.tokens.accent || comp.tokens.btnBg)) {
+  } else if (opts.recolor && pageAccent() && comp.tokens && (comp.tokens.accent || comp.tokens.btnBg)) {
     // keep its own words but still match the brand colours: run the remix with no content changes
-    const data = { content: null, opts: { thumb: !!opts.thumb, recolor: { from: comp.tokens.accent || comp.tokens.btnBg, to: brandColor(), mono: !comp.tokens.accent } } };
+    const data = { content: null, opts: { thumb: !!opts.thumb, recolor: { from: comp.tokens.accent || comp.tokens.btnBg, to: pageAccent(), mono: !comp.tokens.accent } } };
     html = injectEnd(html, `<script>(${__transplant})(${jsonForScript(data)});<\/script>`);
   }
   if (opts.reportHeight) {

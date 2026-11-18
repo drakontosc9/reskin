@@ -132,8 +132,9 @@ function libraryPatchComps() {
     const c = shown[i]; if (!c) return;
     const th = t.querySelector('.cthumb');
     if (c.icon) { th.querySelector('iframe') && th.querySelector('iframe').remove(); th.classList.add('icon'); th.insertAdjacentHTML('beforeend', `<img alt="" src="data:image/svg+xml;charset=utf-8,${encodeURIComponent(c.svg)}">`); }
-    th.style.cursor = 'pointer'; th.title = 'Open';
-    th.onclick = () => { LIB.detail = c.id; renderLibrary(); };
+    th.style.cursor = 'grab'; th.title = 'Click to open · press and hold to carry it onto your page';
+    th.onclick = null;
+    if (!t._carry) { t._carry = true; t.classList.add('carryable'); makeCarryable(t, c, () => { LIB.detail = c.id; renderLibrary(); }); }
     const use = t.querySelector('[data-use]');
     if (use) { use.textContent = 'Apply its style…'; use.onclick = () => applyStyleDialog(c); }
     const put = document.createElement('button'); put.className = 'primary'; put.textContent = 'Put on my page';

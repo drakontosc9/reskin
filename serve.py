@@ -29,6 +29,12 @@ UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like 
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
+    # Reskin's own files change while you work on it: make the browser check for a newer copy every time
+    def end_headers(self):
+        if not any(b"Cache-Control" in h for h in getattr(self, "_headers_buffer", [])):
+            self.send_header("Cache-Control", "no-cache")
+        super().end_headers()
+
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
         if parsed.path != "/proxy":
