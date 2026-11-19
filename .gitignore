@@ -9,3 +9,7 @@ __pycache__/
 # Supabase database password (local only)
 supabase/.db-password
 supabase/.temp/
+
+# private pitch deck and test copies of real sites (never commit)
+_deck/
+_tmp_sites/

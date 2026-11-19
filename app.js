@@ -165,14 +165,14 @@ async function loadTarget() {
   const t = state.tgt;
   if (!t || t.tokens || !t.text.trim()) return;
   t.pasting = false; t.error = null;
-  let viewHtml;
+  let viewHtml, liveHtml;
   if (t.kind === 'tsx') viewHtml = tsxDoc(t.text, 'view');
-  else { const prep = await prepareHtml(t.text, t.assets); t.missing = prep.missing; viewHtml = prep.html; }
+  else { const prep = await prepareHtml(t.text, t.assets); t.missing = prep.missing; viewHtml = prep.html; liveHtml = prep.liveHtml; }
   try {
     const res = await runSandbox(id => t.kind === 'tsx' ? tsxDoc(t.text, id) : withProbe(viewHtml, id));
     t.tokens = { ...res.tokens, name: t.name };
     t.viewHtml = viewHtml;
-    t.liveBase = t.kind === 'tsx' ? tsxDoc(t.text, 'live') : viewHtml;
+    t.liveBase = t.kind === 'tsx' ? tsxDoc(t.text, 'live') : liveHtml || viewHtml;   // the remix runs the design's own scripts
   } catch (e) {
     t.error = `Couldn't read this design: ${e.message}`;
   }

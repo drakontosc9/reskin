@@ -784,6 +784,147 @@ function __runner() {
   } catch (e) { if (window.__reskinFail) window.__reskinFail('Could not compile the component: ' + String(e.message || e).split('\n')[0]); }
 }
 
+/* ---- click-to-edit: every element knows where it comes from in the code ----
+   Inspect mode only. Each JSX element gets a number in source order (data-rk-part; data-rk-use on a component
+   usage like <Button>, which passes it through to the DOM). The part map says, per number, where in the source its
+   classes, inline style, words and literal values are, so the app can change the code itself. Built fresh on every
+   compile, so it never goes stale. */
+function __rkTagPlugin(babel) {
+  var t = babel.types, MAP = window.__RK_MAP = [], n = 0;
+  var COLOR = /^(#[0-9a-f]{3,8}|(rgb|rgba|hsl|hsla|oklch)\(.*\))$/i;
+  function rng(x) { return x && x.start != null ? { s: x.start, e: x.end } : null; }
+  function str(x) { return x && x.type === 'StringLiteral' ? x : x && x.type === 'TemplateLiteral' && !x.expressions.length ? x : null; }
+  function attr(node, name) { for (var i = 0; i < node.attributes.length; i++) { var a = node.attributes[i]; if (a.type === 'JSXAttribute' && a.name && a.name.name === name) return a; } return null; }
+  function val(a) { return !a || !a.value ? null : a.value.type === 'JSXExpressionContainer' ? a.value.expression : a.value; }
+  function classes(a) {
+    var v = val(a); if (!v) return null;
+    var s = str(v); if (s) return { s: s.start + 1, e: s.end - 1, v: s.type === 'StringLiteral' ? s.value : s.quasis[0].value.raw };
+    if (v.type === 'CallExpression' && v.arguments.length && (s = str(v.arguments[0]))) return { s: s.start + 1, e: s.end - 1, v: s.type === 'StringLiteral' ? s.value : s.quasis[0].value.raw, via: (v.callee.name || 'fn') };
+    return { dynamic: true };
+  }
+  function lits(node, path, out, depth) {
+    if (!node || depth > 3 || out.length > 24) return;
+    if (node.type === 'NumericLiteral') out.push({ path: path, s: node.start, e: node.end, raw: String(node.value), kind: 'num' });
+    else if (node.type === 'UnaryExpression' && node.operator === '-' && node.argument.type === 'NumericLiteral') out.push({ path: path, s: node.start, e: node.end, raw: '-' + node.argument.value, kind: 'num' });
+    else if (node.type === 'StringLiteral' && COLOR.test(node.value.trim())) out.push({ path: path, s: node.start + 1, e: node.end - 1, raw: node.value, kind: 'color' });
+    else if (node.type === 'ObjectExpression') node.properties.forEach(function (p) { if (p.type === 'ObjectProperty' && !p.computed) lits(p.value, path + '.' + (p.key.name || p.key.value), out, depth + 1); });
+    else if (node.type === 'ArrayExpression') node.elements.forEach(function (x, i) { lits(x, path + '[' + i + ']', out, depth + 1); });
+  }
+  function owner(p) {
+    for (var q = p; q; q = q.parentPath) {
+      if (q.isFunctionDeclaration() && q.node.id) return q.node.id.name;
+      if (q.isVariableDeclarator() && q.node.id && q.node.id.name && /^[A-Z]/.test(q.node.id.name)) return q.node.id.name;
+    }
+    return '';
+  }
+  function inLoop(p) { for (var q = p; q; q = q.parentPath) { if (q.isCallExpression() && q.node.callee.property && /^(map|flatMap)$/.test(q.node.callee.property.name)) return true; if (q.isFunctionDeclaration()) return false; } return false; }
+  return { visitor: { JSXOpeningElement: function (p) {
+    var node = p.node, nm = node.name;
+    if (node.start == null || attr(node, 'data-rk-part') || attr(node, 'data-rk-def')) return;
+    var tag = nm.type === 'JSXIdentifier' ? nm.name : nm.type === 'JSXMemberExpression' ? (nm.object.name || '') + '.' + nm.property.name : '';
+    if (!tag || tag === 'Fragment' || /\.Fragment$/.test(tag)) return;
+    var use = /^[A-Z]/.test(tag) || tag.indexOf('.') > 0, id = n++;
+    var st = val(attr(node, 'style')), entry = { n: id, tag: tag, use: use, s: node.start, e: node.end, at: nm.end, comp: owner(p), loop: inLoop(p) };
+    var hint = ['aria-label', 'title', 'alt', 'placeholder', 'id', 'role'].map(function (k) { var v = val(attr(node, k)); return v && v.type === 'StringLiteral' ? v.value : ''; }).filter(Boolean)[0];
+    if (hint) entry.hint = hint;
+    var ca = attr(node, 'className') || attr(node, 'class'); if (ca) entry.cls = classes(ca);
+    if (st && st.type === 'ObjectExpression') entry.style = { s: st.start, e: st.end, props: st.properties.filter(function (x) { return x.type === 'ObjectProperty' && !x.computed; }).map(function (x) { return { k: x.key.name || x.key.value, s: x.value.start, e: x.value.end }; }) };
+    else if (st) entry.style = { dynamic: true };
+    var L = []; node.attributes.forEach(function (a) { if (a.type === 'JSXAttribute' && a.name && typeof a.name.name === 'string' && !/^(className|class|key|style|tabIndex|id|role|aria-.*|data-.*)$/.test(a.name.name)) lits(val(a), a.name.name, L, 0); });
+    lits(st, 'style', L, 0); entry.lits = L;
+    var el = p.parentPath.node, T = [];
+    (el.children || []).forEach(function (c) {
+      if (c.type === 'JSXText' && c.value.trim()) { var lead = c.value.match(/^\s*/)[0].length, trail = c.value.match(/\s*$/)[0].length; T.push({ s: c.start + lead, e: c.end - trail, v: c.value.trim().replace(/\s+/g, ' ') }); }
+      else if (c.type === 'JSXExpressionContainer' && c.expression.type === 'StringLiteral') T.push({ s: c.expression.start + 1, e: c.expression.end - 1, v: c.expression.value, q: 1 });
+    });
+    entry.texts = T;
+    // A usage (<RichButton>) passes its tag down through {...props}; the element inside the component then carries
+    // both: data-rk-use (this use, written first so a spread overrides it) and data-rk-def/part (the component's own).
+    var A = function (k) { return t.jsxAttribute(t.jsxIdentifier(k), t.stringLiteral(String(id))); };
+    if (use) { node.attributes.unshift(A('data-rk-use')); node.attributes.push(A('data-rk-def')); } else node.attributes.push(A('data-rk-part'));
+    MAP.push(entry);
+  } } };
+}
+
+/* In-frame inspector: hover or Tab shows a part's name and size; click (or Enter) pins it; Esc clears; ↑ goes to the
+   part around it. Alt+click uses the component normally. Talks to the app by postMessage only. */
+function __rkInspect() {
+  var doc = document, pinned = null, hovered = null;
+  var css = doc.createElement('style');
+  css.textContent = '#rk-ins{position:fixed;inset:0;pointer-events:none;z-index:2147483647;font:500 11px/1 ui-monospace,SFMono-Regular,Menlo,monospace}' +
+    '#rk-ins .bx{position:fixed;border:1px solid #ff6a3d;background:rgba(255,106,61,.06);border-radius:2px;transition:all .12s ease}' +
+    '#rk-ins .bx.pin{border-width:1.5px;background:rgba(255,106,61,.10)}#rk-ins .tw{position:fixed;border:1px dashed rgba(255,106,61,.55)}' +
+    '#rk-ins .tag{position:fixed;padding:6px 9px;border-radius:6px;background:#111;color:#f3efe8;border:1px solid #333;white-space:nowrap;box-shadow:0 6px 18px rgba(0,0,0,.35)}' +
+    '#rk-ins .tag b{color:#ff6a3d;font-weight:500;margin-left:6px}#rk-ins .dim{position:fixed;color:#ff6a3d;font-size:10px;background:rgba(17,17,17,.85);padding:2px 4px;border-radius:3px}' +
+    '#rk-ins svg{position:fixed;inset:0;width:100%;height:100%;overflow:visible}';
+  (doc.head || doc.documentElement).appendChild(css);
+  var layer = doc.createElement('div'); layer.id = 'rk-ins'; doc.documentElement.appendChild(layer);
+  // an element can stand for several places in the code: this use of a component, and the component's own element
+  function ids(el) { var out = []; ['data-rk-use', 'data-rk-def', 'data-rk-part'].forEach(function (k) { var v = el.getAttribute(k); if (v != null && out.indexOf(v) < 0) out.push(v); }); return out; }
+  var focusId = null;   // which of an element's places is selected (the app may switch it)
+  function idOf(el) { var l = ids(el); return focusId != null && l.indexOf(String(focusId)) >= 0 ? String(focusId) : l[0]; }
+  function partOf(el) { while (el && el.nodeType === 1) { if (el.closest && el.closest('#rk-ins')) return null; if (ids(el).length) return el; el = el.parentElement; } return null; }
+  function all(id) { return doc.querySelectorAll('[data-rk-use="' + id + '"],[data-rk-def="' + id + '"],[data-rk-part="' + id + '"]'); }
+  function name(el) {
+    var t = (el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('alt') || '').trim();
+    if (!t) { var own = ''; el.childNodes.forEach(function (c) { if (c.nodeType === 3) own += c.nodeValue; }); t = own.trim(); }
+    if (!t && el.children.length === 0) t = (el.textContent || '').trim();
+    var tag = el.tagName.toLowerCase();
+    var kind = { button: 'Button', a: 'Link', nav: 'Navigation', ul: 'List', li: 'List item', img: 'Picture', svg: 'Drawing', path: 'Shape', circle: 'Circle', line: 'Line', rect: 'Rectangle', g: 'Group', text: 'Label', input: 'Field', h1: 'Heading', h2: 'Heading', h3: 'Heading', p: 'Text', span: 'Text', section: 'Section', header: 'Header', footer: 'Footer' }[tag] || 'Box';
+    return t ? kind + ' · ' + t.replace(/\s+/g, ' ').slice(0, 28) : kind;
+  }
+  function snap(el) { var c = getComputedStyle(el); return { color: c.color, bg: c.backgroundColor, fontSize: c.fontSize, fontWeight: c.fontWeight, pad: [c.paddingTop, c.paddingRight, c.paddingBottom, c.paddingLeft], radius: c.borderTopLeftRadius, opacity: c.opacity, fill: c.fill, stroke: c.stroke, strokeWidth: c.strokeWidth }; }
+  function draw() {
+    layer.innerHTML = '';
+    [hovered && hovered !== pinned ? hovered : null, pinned].forEach(function (el, k) {
+      if (!el || !el.isConnected) return;
+      var id = idOf(el), r = el.getBoundingClientRect(), twins = all(id);
+      if (k === 1) twins.forEach(function (x) { if (x === el) return; var q = x.getBoundingClientRect(); var d = doc.createElement('div'); d.className = 'tw'; d.style.cssText = 'left:' + q.left + 'px;top:' + q.top + 'px;width:' + q.width + 'px;height:' + q.height + 'px'; layer.appendChild(d); });
+      var b = doc.createElement('div'); b.className = 'bx' + (k ? ' pin' : ''); b.style.cssText = 'left:' + r.left + 'px;top:' + r.top + 'px;width:' + r.width + 'px;height:' + r.height + 'px'; layer.appendChild(b);
+      // callout with a leader line, placed in whichever side has room
+      var tag = doc.createElement('div'); tag.className = 'tag'; tag.innerHTML = name(el).replace(/[<&]/g, '') + (twins.length > 1 ? '<b>×' + twins.length + '</b>' : ''); layer.appendChild(tag);
+      var tw = tag.offsetWidth, th = tag.offsetHeight, W = innerWidth, above = r.top > th + 30;
+      var tx = Math.max(6, Math.min(W - tw - 6, r.left + r.width / 2 - tw / 2 + (r.left + r.width / 2 > W / 2 ? -40 : 40))), ty = above ? r.top - th - 22 : Math.min(innerHeight - th - 6, r.bottom + 22);
+      tag.style.left = tx + 'px'; tag.style.top = ty + 'px';
+      var svg = doc.createElementNS('http://www.w3.org/2000/svg', 'svg'), ln = doc.createElementNS(svg.namespaceURI, 'path');
+      var ax = Math.max(r.left, Math.min(r.right, tx + tw / 2)), ay = above ? r.top : r.bottom, bx = tx + tw / 2, by = above ? ty + th : ty;
+      ln.setAttribute('d', 'M' + ax + ' ' + ay + 'L' + ax + ' ' + (ay + by) / 2 + 'L' + bx + ' ' + (ay + by) / 2 + 'L' + bx + ' ' + by); ln.setAttribute('fill', 'none'); ln.setAttribute('stroke', '#ff6a3d'); ln.setAttribute('stroke-width', '1');
+      svg.appendChild(ln); layer.appendChild(svg);
+      if (k === 1) {   // dimensions of the pinned part
+        var w = doc.createElement('div'); w.className = 'dim'; w.textContent = Math.round(r.width); w.style.left = (r.left + r.width / 2 - 12) + 'px'; w.style.top = (above ? r.bottom + 4 : r.top - 18) + 'px'; layer.appendChild(w);
+        var h = doc.createElement('div'); h.className = 'dim'; h.textContent = Math.round(r.height); h.style.left = (r.right + 4) + 'px'; h.style.top = (r.top + r.height / 2 - 8) + 'px'; layer.appendChild(h);
+      }
+    });
+  }
+  function pin(el, quiet) {
+    if (el !== pinned) focusId = null;
+    pinned = el; draw();
+    if (!quiet) parent.postMessage({ rkInspectPick: el ? { n: +idOf(el), places: ids(el).map(Number), label: name(el), tag: el.tagName.toLowerCase(), count: all(idOf(el)).length, cs: snap(el) } : null }, '*');
+  }
+  doc.addEventListener('mousemove', function (e) { var p = partOf(e.target); if (p !== hovered) { hovered = p; draw(); } }, true);
+  doc.addEventListener('mouseleave', function () { hovered = null; draw(); });
+  ['click', 'pointerdown', 'mousedown', 'pointerup', 'mouseup'].forEach(function (ev) {
+    doc.addEventListener(ev, function (e) { if (e.altKey) return; var p = partOf(e.target); if (!p) return; e.preventDefault(); e.stopPropagation(); if (ev === 'click') pin(p); }, true);
+  });
+  doc.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') { pin(null); return; }
+    if (e.key === 'ArrowUp' && pinned) { e.preventDefault(); var up = partOf(pinned.parentElement); if (up) pin(up); return; }
+    if (e.key === 'Enter' && doc.activeElement && partOf(doc.activeElement)) { e.preventDefault(); pin(partOf(doc.activeElement)); }
+  }, true);
+  doc.addEventListener('focusin', function (e) { var p = partOf(e.target); if (p) { hovered = p; draw(); } });
+  addEventListener('scroll', draw, true); addEventListener('resize', draw);
+  setInterval(function () { if (pinned && !pinned.isConnected) { var again = all(pinned.getAttribute('data-rk-use') || pinned.getAttribute('data-rk-part'))[0]; pinned = again || null; } if (pinned || hovered) draw(); }, 400);
+  addEventListener('message', function (e) {
+    var d = e.data || {};
+    if ('rkInspectSelect' in d) { var tries = 0; (function find() { var el = d.rkInspectSelect == null ? null : all(d.rkInspectSelect)[0]; if (el || d.rkInspectSelect == null || tries++ > 30) { pin(el || null, true); focusId = d.rkInspectSelect; pin(el || null); } else setTimeout(find, 150); })(); }
+    if (d.rkInspectPreview) { var pv = d.rkInspectPreview; all(pv.n).forEach(function (el) { for (var k in pv.css) el.style.setProperty(k, pv.css[k], 'important'); }); draw(); }
+  });
+  // the app needs the part map (TSX: made by the compiler; it may finish after this runs)
+  var sent = false;
+  (function send() { if (window.__RK_MAP && window.__RK_MAP.length && !sent) { sent = true; parent.postMessage({ rkPartMap: window.__RK_MAP }, '*'); } else if (!sent) setTimeout(send, 150); })();
+  parent.postMessage({ rkInspectReady: true }, '*');
+}
+
 // Compiles TSX to an ES module: npm imports -> esm.sh, local files -> stand-in modules.
 function __rkTransform(code) {
   var DEPS = '?deps=react@18.3.1,react-dom@18.3.1';
@@ -833,7 +974,7 @@ function __rkTransform(code) {
       ExportNamedDeclaration: function (path) { if (path.node.source) path.remove(); },
     } };
   };
-  return Babel.transform(code, { filename: 'Component.tsx', presets: [['typescript', { isTSX: true, allExtensions: true }], ['react', { runtime: 'automatic' }]], plugins: [plugin] }).code;
+  return Babel.transform(code, { filename: 'Component.tsx', presets: [['typescript', { isTSX: true, allExtensions: true }], ['react', { runtime: 'automatic' }]], plugins: window.__RK_INSPECT && window.__rkTagPlugin ? [window.__rkTagPlugin, plugin] : [plugin] }).code;
 }
 
 // Preferred path: real React + real npm packages (framer-motion, Radix, lucide…), so things animate and click.
@@ -869,7 +1010,11 @@ function __transplant(DATA) {
   var shown = false;
   function reveal() { if (shown) return; shown = true; gate.textContent = 'body{opacity:1;transition:opacity .35s ease}' + keep; }
   setTimeout(reveal, 12000);
-  if (C && C.title) doc.title = C.title;
+  if (C && C.title) {
+    doc.title = C.title;
+    // frameworks that own <head> (React 19, Next.js) render their own title back in: keep the user's
+    new MutationObserver(function () { if (doc.title !== C.title) doc.title = C.title; }).observe(doc.head || root, { subtree: true, childList: true, characterData: true });
+  }
   // React/TSX pages: wait until the component has actually mounted (packages load from a CDN first)
   var isTsx = window.__CODE__ !== undefined;
   var ready = function () { return !isTsx || window.__rkMounted; };
@@ -889,9 +1034,22 @@ function __transplant(DATA) {
   (function tick() {
     var n = size(); if (n === last && n > 10) stable++; else stable = 0; last = n;
     var limit = isTsx ? 12000 : 3000;
-    if ((ready() && stable >= 2 && (doc.body.innerText || '').trim()) || Date.now() - t0 > limit) { try { apply(); } catch (e) { console.error('[reskin]', e); } reveal(); }
+    if ((ready() && stable >= 2 && (doc.body.innerText || '').trim()) || Date.now() - t0 > limit) { try { apply(); } catch (e) { console.error('[reskin]', e); } reveal(); watch(); }
     else setTimeout(tick, 120);
   })();
+  // The design's own scripts keep running after the swap: a hydrating app, a page-transition library or a loader can
+  // render the page's original content back over it. If the user's headline goes missing, swap again once things settle.
+  function watch() {
+    var key = C && C.hero && C.hero.title && C.hero.title.toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 40);
+    if (!key) return;
+    var redo = 0, calm = 0, prev = size(), end = Date.now() + 20000;
+    var iv = setInterval(function () {
+      var n = size(); calm = n === prev ? calm + 1 : 0; prev = n;
+      var here = (doc.body.textContent || '').toLowerCase().replace(/\s+/g, ' ').indexOf(key) >= 0;
+      if (!here && calm >= 2 && redo < 3) { redo++; calm = 0; try { apply(); } catch (e) { console.error('[reskin]', e); } }
+      if (Date.now() > end || redo >= 3) clearInterval(iv);
+    }, 600);
+  }
 
   function apply() {
     if (!C) { if (O.recolor) recolor(O.recolor); return; }   // colour-only mode: keep the page's own words
@@ -1349,7 +1507,8 @@ function splitBundle(code) {
   return { js, css };
 }
 // mount (optional): { name, props } — show that component with those props (Studio's component settings)
-function tsxDoc(code, id, mount) {
+// opt.inspect: click-to-edit mode — compile with source tags and run the part inspector
+function tsxDoc(code, id, mount, opt = {}) {
   const bundle = splitBundle(code);
   code = bundle.js;
   const dark = /\bclassName=["'`][^"'`]*\bdark\b/.test(code) ? 'dark' : '';
@@ -1360,6 +1519,7 @@ function tsxDoc(code, id, mount) {
 </head><body><div id="root"></div>
 <script>(${__probe})(${jsonForScript(id)}, false, 6000);<\/script>
 <script>window.__CODE__=${jsonForScript(prepareTsx(code))};${mount ? `window.__RK_MOUNT=${jsonForScript(mount)};` : ''}${EXPORT_PINS ? `window.__RK_PINS=${jsonForScript(EXPORT_PINS)};` : ''}<\/script>
+${opt.inspect ? `<script>window.__RK_INSPECT=true;\n${__rkTagPlugin}\n${__rkInspect}\n__rkInspect();<\/script>` : ''}
 <script>${__shims}\n${__rkMount}\n${__runner}\n${__rkTransform}\n${__runner2}\n__runner2();<\/script></body></html>`;
 }
 // set while building a download: package versions fixed at that moment, so the downloaded site keeps working the same way
@@ -1421,6 +1581,22 @@ function __rkSrcdocShim() {
   P.prototype = U.prototype; P.__rk = true;
   ['createObjectURL', 'revokeObjectURL', 'canParse', 'parse'].forEach(function (k) { if (U[k]) P[k] = U[k].bind(U); });
   window.URL = P;
+  // Single-page apps (Next.js, Nuxt, SvelteKit…) write their real address into history on start. A sandboxed srcdoc page
+  // can't hold another site's address, so that throws and the app falls over to its error screen. Keep the page where it is.
+  ['pushState', 'replaceState'].forEach(function (k) {
+    var orig = history[k]; if (!orig) return;
+    history[k] = function (st, t, url) { try { return orig.call(history, st, t, url); } catch (e) { try { return orig.call(history, st, t); } catch (e2) {} } };
+  });
+  // Storage and cookies throw in a sandboxed page; sites that touch them on start would stop there. Give them a scratch copy.
+  function mem() { var d = {}; return { getItem: function (k) { return k in d ? d[k] : null; }, setItem: function (k, v) { d[k] = String(v); }, removeItem: function (k) { delete d[k]; }, clear: function () { d = {}; }, key: function (i) { return Object.keys(d)[i] || null; }, get length() { return Object.keys(d).length; } }; }
+  ['localStorage', 'sessionStorage'].forEach(function (k) {
+    var ok = false; try { ok = !!window[k] && (window[k].length, true); } catch (e) {}
+    if (!ok) try { Object.defineProperty(window, k, { value: mem(), configurable: true }); } catch (e) {}
+  });
+  try { document.cookie; } catch (e) {
+    var jar = '';
+    try { Object.defineProperty(document, 'cookie', { get: function () { return jar; }, set: function (v) { var kv = String(v).split(';')[0]; jar = jar ? jar + '; ' + kv : kv; }, configurable: true }); } catch (e2) {}
+  }
 }
 const injectHeadStart = (html, tag) => { const m = /<head[^>]*>/i.exec(html); return m ? html.slice(0, m.index + m[0].length) + tag + html.slice(m.index + m[0].length) : tag + html; };
 const SRCDOC_SHIM = `<script>(${__rkSrcdocShim})();<\/script>`;
@@ -1539,13 +1715,20 @@ function splitFiles(files) {
 }
 const readDataUrl = f => new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.onerror = () => r(null); fr.readAsDataURL(f); });
 
+const TRACKERS = /googletagmanager|google-analytics|gtag\(|\bga\(|doubleclick|connect\.facebook|fbq\(|hotjar|clarity\.ms|segment\.(com|io)|plausible\.io|static\.ads-twitter|analytics\.tiktok|snap\.licdn|klaviyo|_vercel\/insights|_vercel\/speed-insights|cdn\.mxpnl|heap(analytics)?\.|fullstory|posthog|intercom|hs-scripts|hs-analytics|cookiebot|onetrust|cookielaw|complianz|cmplz|cookieyes|iubenda|usercentrics|termly|cookie-script|borlabs|quantcast|didomi|consentmanager/i;
 async function prepareHtml(text, assets) {
   const doc = new DOMParser().parseFromString(text, 'text/html');
   doc.querySelectorAll('meta[http-equiv]').forEach(m => /security-policy|refresh/i.test(m.getAttribute('http-equiv')) && m.remove());
   const visibleText = clean([...doc.body.querySelectorAll('*')].filter(e => !/^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE)$/.test(e.tagName) && !e.children.length).map(e => e.textContent).join(' '));
   const runScripts = visibleText.length < 40 && !!doc.querySelector('script');
-  if (!runScripts) doc.querySelectorAll('script').forEach(s => s.remove());
+  // A saved page's own address (<base href>, http/https only) lets its root-relative CSS, images and scripts load
+  // (Next.js: /_next/...). Anything else — a relative or data: base, a target — is dropped.
+  let base = '';
+  const baseEl = doc.querySelector('base[href]');
+  if (baseEl) { try { const u = new URL(baseEl.getAttribute('href')); if (/^https?:$/.test(u.protocol)) base = u.href; } catch {} }
   doc.querySelectorAll('base').forEach(b => b.remove());
+  // trackers never help a design render, and would report every preview back to the site's analytics
+  doc.querySelectorAll('script').forEach(s => { if (TRACKERS.test((s.getAttribute('src') || '') + ' ' + s.textContent.slice(0, 3000))) s.remove(); });
 
   const isRel = u => u && !/^(data:|https?:|blob:|#|mailto:|tel:|javascript:|\/\/)/i.test(u.trim());
   const find = u => {
@@ -1565,26 +1748,32 @@ async function prepareHtml(text, assets) {
   for (const l of doc.querySelectorAll('link[rel~="stylesheet"][href]')) {
     const href = l.getAttribute('href'), f = find(href);
     if (f) { const st = doc.createElement('style'); st.textContent = await fixCss(await f.text()); l.replaceWith(st); }
-    else if (isRel(href)) missing.add(href);
+    else if (isRel(href) && !base) missing.add(href);
   }
   for (const st of doc.querySelectorAll('style')) st.textContent = await fixCss(st.textContent);
   for (const s of doc.querySelectorAll('script[src]')) {
     const src = s.getAttribute('src'), f = find(src);
     if (f) { const ns = doc.createElement('script'); for (const a of s.attributes) if (!/^(src|crossorigin|integrity)$/.test(a.name)) ns.setAttribute(a.name, a.value); ns.textContent = await f.text(); s.replaceWith(ns); }
-    else if (isRel(src)) missing.add(src);
+    else if (isRel(src) && !base && runScripts) missing.add(src);
   }
   for (const el of doc.querySelectorAll('[src],[poster]')) {
+    let local = false;
     for (const at of ['src', 'poster']) {
       const v = el.getAttribute(at); if (!isRel(v)) continue;
       const f = find(v);
-      if (f && f.size < 6e6) { const d = await readDataUrl(f); if (d) el.setAttribute(at, d); }
-      else if (!f && el.tagName !== 'SCRIPT') missing.add(v);
+      if (f && f.size < 6e6) { const d = await readDataUrl(f); if (d) { el.setAttribute(at, d); local = true; } }
+      else if (!f && !base && el.tagName !== 'SCRIPT') missing.add(v);
     }
-    if (el.hasAttribute('srcset')) el.removeAttribute('srcset');
+    if (el.hasAttribute('srcset') && (local || !base)) el.removeAttribute('srcset');   // with a base, srcset still resolves
   }
   for (const el of doc.querySelectorAll('[style*="url("]')) el.setAttribute('style', await fixCss(el.getAttribute('style')));
+  if (base) { const b = doc.createElement('base'); b.setAttribute('href', base); doc.head.prepend(b); }
+  // liveHtml keeps the design's own scripts: the animated remix runs them (sandboxed: allow-scripts only, so no
+  // same-origin access, top navigation or popups). html is the script-free copy used for reading and previews.
+  const liveHtml = '<!doctype html>\n' + doc.documentElement.outerHTML;
+  if (!runScripts) doc.querySelectorAll('script').forEach(s => s.remove());
   const html = '<!doctype html>\n' + doc.documentElement.outerHTML;
-  return { html, runScripts, missing: [...missing] };
+  return { html, liveHtml, runScripts, base, missing: [...missing] };
 }
 function missingNote(missing) {
   if (!missing.length) return '';
