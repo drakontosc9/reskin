@@ -666,7 +666,7 @@ function renderComps() {
     t.innerHTML = `<div class="cthumb"><span class="src">${esc(c.source)}</span></div>
       <div class="cmeta"><b title="${esc(c.name)}">${esc(c.name)}</b>${c.note ? `<span class="note">${esc(c.note)}</span>` : ''}
         <div class="row"><select data-move>${colls.map(n => `<option ${n === c.collection ? 'selected' : ''}>${esc(n)}</option>`).join('')}<option value="__new">+ New…</option></select>
-        <button class="ghost" data-use>Use as design</button><button class="icon" data-del title="Delete">✕</button></div></div>`;
+        <button class="ghost" data-use>Use as design</button><button class="icon" data-del title="Remove from Library" aria-label="Remove ${esc(c.name)} from Library">✕</button></div></div>`;
     const f = document.createElement('iframe');
     f.setAttribute('sandbox', 'allow-scripts'); f.setAttribute('tabindex', '-1'); f.setAttribute('loading', 'lazy');
     f.srcdoc = compThumbDoc(c);
@@ -674,7 +674,7 @@ function renderComps() {
     const fit = () => { if (th.clientWidth) f.style.transform = `scale(${th.clientWidth / 600})`; };
     fit(); new ResizeObserver(fit).observe(th);
     t.querySelector('[data-use]').onclick = () => useCompAsDesign(c);
-    t.querySelector('[data-del]').onclick = () => { comps.list = comps.list.filter(x => x.id !== c.id); comps.save(); renderComps(); };
+    t.querySelector('[data-del]').onclick = () => removeComp(c.id);
     t.querySelector('[data-move]').onchange = e => { let v = e.target.value; if (v === '__new') v = prompt('New collection name')?.trim(); if (v) { c.collection = v; comps.save(); } renderComps(); };
     grid.appendChild(t);
   });

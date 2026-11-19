@@ -522,7 +522,8 @@ function renderCompView() {
       <div class="bx-panel"><div class="bx-h"><h3>${esc(c.name)} <small>· ${esc(c.source)}${c.collection ? ' · ' + esc(c.collection) : ''}</small></h3>
         <div class="bx-row"><div class="seg" id="cvDev"><button data-d="desktop" class="${B.compDevice === 'desktop' ? 'on' : ''}">Desktop</button><button data-d="mobile" class="${B.compDevice === 'mobile' ? 'on' : ''}">Mobile</button></div>
         <button class="ghost ${INS.on ? 'on' : ''}" id="cvInspect" aria-pressed="${INS.on}" style="height:34px;padding:0 14px;font-size:13px" title="Click any part of it and change it — Reskin rewrites its code">◎ Inspect &amp; edit</button>
-        <button class="primary" id="cvAdd" style="height:34px;padding:0 14px;font-size:13px">Add to my site →</button></div></div>
+        <button class="primary" id="cvAdd" style="height:34px;padding:0 14px;font-size:13px">Add to my site →</button>
+        <button class="ghost cv-remove" id="cvRemove" style="height:34px;padding:0 12px;font-size:13px" title="Remove it from your Library">Remove</button></div></div>
         <div class="bx-frame ${B.compDevice}" id="cvFrame"></div></div>
       <h3 style="margin:22px 0 4px;font-family:'Instrument Serif',serif;font-weight:400;font-size:26px">Variations</h3>
       <p class="found" style="margin:0">Click one to preview it above, or add it to your site straight away.</p>
@@ -531,6 +532,7 @@ function renderCompView() {
   box.querySelectorAll('[data-c]').forEach(b => b.onclick = () => { B.compSel = b.dataset.c; B.compVar = null; renderCompView(); });
   $('cvDev').onclick = e => { const b = e.target.closest('button'); if (!b) return; B.compDevice = b.dataset.d; $('cvDev').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); $('cvFrame').className = 'bx-frame ' + B.compDevice; };
   $('cvInspect').onclick = () => { INS.on = !INS.on; renderCompView(); };
+  $('cvRemove').onclick = () => removeComp(c.id);
   const showMain = v => { $('cvFrame').classList.remove('ins-on'); if (INS.on && !frozenInfo(c)) return insMount(c, $('cvFrame')); const f = document.createElement('iframe'); f.setAttribute('sandbox', 'allow-scripts allow-popups allow-popups-to-escape-sandbox'); f.srcdoc = v ? compBlockDoc(c, v.opts) : compDoc(c); $('cvFrame').replaceChildren(f); };
   showMain(B.compVar);
   $('cvAdd').onclick = () => addVariantToSite(c, B.compVar);

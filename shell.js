@@ -136,7 +136,7 @@ function libraryPatchComps() {
     th.onclick = null;
     if (!t._carry) { t._carry = true; t.classList.add('carryable'); makeCarryable(t, c, () => { LIB.detail = c.id; renderLibrary(); }); }
     const use = t.querySelector('[data-use]');
-    if (use) { use.textContent = 'Apply its style…'; use.onclick = () => applyStyleDialog(c); }
+    if (use) { use.textContent = 'Apply style'; use.title = 'Apply its style to your page…'; use.onclick = () => applyStyleDialog(c); }
     const put = document.createElement('button'); put.className = 'primary'; put.textContent = 'Put on my page';
     put.onclick = () => { S.flash = c.id; setView('studio'); toast(`Drag “${c.name}” from the rail onto your page`, 4000); };   // it glows in the rail
     if (use) use.before(put);

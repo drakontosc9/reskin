@@ -26,5 +26,6 @@
 .ins-hist{margin-top:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding-top:8px;border-top:1px solid #2a2826}
 .ins-hist .ghost{background:#1f1d1b;color:#f3efe8;border-color:#3a3835;padding:5px 10px;font-size:12.5px}
 .ins-hist .ghost[disabled]{opacity:.4;cursor:default}
+.cv-remove:hover,.cv-remove:focus-visible{color:#b2341a;border-color:#b2341a}
 #cvInspect.on{background:var(--ink);color:#fff;border-color:var(--ink)}
 @media (max-width:900px){.cv-main .bx-frame.ins-on{grid-template-columns:1fr;grid-template-rows:420px auto;height:auto}.ins-panel{border-left:0;border-top:1px solid #2a2826}}

@@ -25,9 +25,11 @@
 .st-tile.on{border-color:var(--accent);box-shadow:0 0 0 4px rgba(255,91,55,.14)}
 
 /* 2. Component: the library's tiles get two Studio actions, so give the row room */
-#stComps .cmeta .row,#libComps .cmeta .row{display:grid;grid-template-columns:1fr 1fr auto;gap:6px;align-items:center}
-#stComps .cmeta .row select,#libComps .cmeta .row select{grid-column:1/-1;width:100%}
-#stComps .cmeta .row button,#libComps .cmeta .row button{white-space:nowrap;height:32px;padding:0 10px;font-size:12.5px}
+#stComps .cmeta .row,#libComps .cmeta .row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) 32px;gap:6px;align-items:center}
+#stComps .cmeta .row select,#libComps .cmeta .row select{grid-column:1/-1;width:100%;min-width:0}
+#stComps .cmeta .row button,#libComps .cmeta .row button{white-space:nowrap;height:32px;padding:0 10px;font-size:12.5px;min-width:0;overflow:hidden;text-overflow:ellipsis}
+#stComps .cmeta .row [data-del],#libComps .cmeta .row [data-del]{padding:0;width:32px;color:var(--muted)}
+#stComps .cmeta .row [data-del]:hover,#libComps .cmeta .row [data-del]:hover,#libComps .cmeta .row [data-del]:focus-visible{color:#b2341a;border-color:#b2341a}
 
 /* 3. Editor */
 .st-ed{display:grid;grid-template-columns:250px minmax(0,1fr) 330px;gap:14px;align-items:start}

@@ -945,7 +945,33 @@ function toastUndo(msg, snap) {
   let t = $('undoToast'); if (!t) { t = document.createElement('div'); t.id = 'undoToast'; t.className = 'undo-toast'; document.body.appendChild(t); }
   t.innerHTML = `<span>${esc(msg)}</span><button type="button">Undo</button>`;
   t.classList.add('show'); clearTimeout(toastUndo.t); toastUndo.t = setTimeout(() => t.classList.remove('show'), 6500);
-  t.querySelector('button').onclick = () => { t.classList.remove('show'); restorePage(snap); toast('Undone'); };
+  t.querySelector('button').onclick = () => { t.classList.remove('show'); typeof snap === 'function' ? snap() : restorePage(snap); toast('Undone'); };
+}
+// Remove a component from the Library. If it's on your page, say so first; it comes off the page too
+// (a component it replaced gives your own section back). Undo puts both back.
+function removeComp(id) {
+  const at = comps.list.findIndex(x => x.id === id); if (at < 0) return;
+  const c = comps.list[at], p = typeof B !== 'undefined' && B.project;
+  const usesIt = e => e.compId === id || (e.action && e.action.compId === id);
+  const edits = p ? (p.edits || []).filter(usesIt) : [], blocks = p ? (p.blocks || []).filter(b => b.kind === 'comp' && b.compId === id) : [];
+  const n = edits.length + blocks.length;
+  if (n && !confirm(`“${c.name}” is on your page${n > 1 ? ` ${n} times` : ''}. Remove it from your Library and from your page?`)) return;
+  const pageSnap = p ? snapshotPage() : null;
+  comps.list.splice(at, 1);
+  if (p && n) {
+    p.edits = (p.edits || []).filter(e => !usesIt(e));
+    blocks.forEach(b => { const i = p.blocks.indexOf(b); if (i >= 0) p.blocks.splice(i, 1, ...(b.replaces ? siteBlocks(state.model).filter(x => x.ref === b.replaces) : [])); });
+    saveProject();
+  }
+  comps.save();
+  if (typeof INS !== 'undefined' && INS.compId === id) Object.assign(INS, { compId: null, map: null, pick: null, sel: null });
+  const redraw = () => { if (LIB.detail && !compById(LIB.detail)) LIB.detail = null; if (state.view === 'library') renderLibrary(); else renderComps(); if (n && typeof renderEditorWs === 'function') try { renderEditorWs(); } catch (e) {} };
+  redraw();
+  toastUndo(`Removed “${c.name}”${n ? ' from your Library and your page' : ' from your Library'}`, () => {
+    comps.list.splice(Math.min(at, comps.list.length), 0, c); comps.save();
+    if (pageSnap) restorePage(pageSnap);
+    redraw();
+  });
 }
 function placeComp(compId, it) {
   const c = compById(compId); if (!c || !it) return;
