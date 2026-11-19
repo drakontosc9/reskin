@@ -55,7 +55,9 @@ function __rkElem(D) {
     for (var i = 0; i < all.length && i < 3000; i++) {
       var el = all[i]; if (/^(SCRIPT|STYLE|LINK|META|TEMPLATE|NOSCRIPT|BR)$/.test(el.tagName)) continue;
       var r = el.getBoundingClientRect(); if (r.width < 1 || r.height < 1) continue;
-      if (r.width >= vw * 0.97 && r.height >= vh * 0.9) { BG = opaque(el) || BG; stage.push(el); continue; }   // a full-screen wrapper: its colour is the backdrop
+      // a full-screen wrapper: its colour is the backdrop — but a full-screen canvas, video or picture IS the
+      // component (a WebGL lens, a shader), not staging
+      if (r.width >= vw * 0.97 && r.height >= vh * 0.9 && !/^(CANVAS|VIDEO|IMG|SVG|IFRAME|PICTURE)$/i.test(el.tagName)) { BG = opaque(el) || BG; stage.push(el); continue; }
       if (r.width >= vw * 0.97 && bare(el)) continue;   // a full-width layout wrapper (React's #root, a flex row) isn't content either
       x0 = Math.min(x0, r.left); y0 = Math.min(y0, r.top); x1 = Math.max(x1, r.right); y1 = Math.max(y1, r.bottom);
     }
@@ -313,6 +315,7 @@ function __rkStudio(EDITS, MODE) {
   function setSize(tile, size, rows) {
     var cr = SIZES[size] || SIZES.big;
     tile.className = tile.className.replace(/\brk-[cr]\d\b/g, '').trim() + ' rk-c' + cr[0] + ' rk-r' + (rows || cr[1]);
+    tile.style.setProperty('--rkc', cr[0]);   // its width in columns, for a centred tile that spans the row
   }
   function resize(k, size, rows) { setSize(k.tile, size, rows); k.s = 1; k.adj = 0; fit(k); }
   // Auto size: judge the content's shape at the starting 2×2 tile (and once more if it went full width), then never again
@@ -449,7 +452,7 @@ function __rkStudio(EDITS, MODE) {
     } else if (e.doc) {
       var L = e.layout || { flow: true, size: 'auto' };
       var tile = document.createElement('div');
-      tile.className = 'rk-e rk-tile'; tile.setAttribute('data-rk-edit', e.id);
+      tile.className = 'rk-e rk-tile' + (L.center ? ' rk-center' : ''); tile.setAttribute('data-rk-edit', e.id);
       if (L.flow) {
         setSize(tile, L.size === 'auto' ? (L.row ? 'full' : 'big') : L.size);
         var spot = bentoSpot(el, e);
@@ -519,9 +522,11 @@ function __rkStudio(EDITS, MODE) {
     '.rk-wording{outline:3px solid #2f6bff!important;outline-offset:4px}' +
     '.rk-empty{position:absolute;inset:10px;display:grid;place-items:center;text-align:center;padding:14px;border:2px dashed #c9c2b8;border-radius:12px;background:rgba(250,248,245,.94);color:#57524b;font:500 13px/1.45 Inter,system-ui,sans-serif}' +
     '.rk-bento>.rk-c1{grid-column:span 1}.rk-bento>.rk-c2{grid-column:span 2}.rk-bento>.rk-c4{grid-column:1/-1}' +
+    '.rk-bento>.rk-tile.rk-center{grid-column:1/-1;justify-self:center;width:calc(var(--rkc,2) * (100% - 60px) / 4 + (var(--rkc,2) - 1) * 20px)}' +
     '.rk-bento>.rk-r1{grid-row:span 1}.rk-bento>.rk-r2{grid-row:span 2}.rk-bento>.rk-r3{grid-row:span 3}.rk-bento>.rk-r4{grid-row:span 4}' +
     '@media (max-width:900px){.rk-bento{grid-template-columns:repeat(2,minmax(0,1fr))!important}}' +
-    '@media (max-width:560px){.rk-bento{grid-template-columns:1fr!important}.rk-bento>.rk-c2{grid-column:1/-1}}' +
+    '@media (max-width:900px){.rk-bento>.rk-tile.rk-center{width:calc(min(var(--rkc,2),2) * (100% - 20px) / 2 + (min(var(--rkc,2),2) - 1) * 20px)}}' +
+    '@media (max-width:560px){.rk-bento{grid-template-columns:1fr!important}.rk-bento>.rk-c2{grid-column:1/-1}.rk-bento>.rk-tile.rk-center{width:100%}}' +
     '.rk-pop-bg{position:fixed;inset:0;z-index:2147483000;background:rgba(15,14,13,.55);display:grid;place-items:center;padding:16px;animation:rkFade .2s ease}' +
     '.rk-pop-box{position:relative;width:min(560px,100%);background:#fff;border-radius:16px;box-shadow:0 30px 80px rgba(0,0,0,.35);overflow:hidden}' +
     '.rk-pop-in{position:relative;width:100%;height:min(520px,80vh);overflow:hidden}' +
@@ -625,7 +630,7 @@ function __rkStudio(EDITS, MODE) {
     if (barFor && barFor.el === bx.el) return;
     hideBar(); barFor = bx; bx.el.classList.add('rk-hl');
     var tile = bx.editId && bx.el.classList.contains('rk-tile');
-    bar.innerHTML = (tile ? '<button data-a="size" title="Change its size">⤢ Size</button>' : '') + '<button data-a="swap" title="Drag another component onto it, or pick one">⇄ Swap</button><button data-a="remove" title="Take it off the page">✕ Remove</button>';
+    bar.innerHTML = (tile ? '<button data-a="size" title="Change its size">⤢ Size</button>' : '') + (bx.editId ? '<button data-a="place" title="Centre it, or make it its own section">⊞ Place</button>' : '') + '<button data-a="swap" title="Drag another component onto it, or pick one">⇄ Swap</button><button data-a="remove" title="Take it off the page">✕ Remove</button>';
     var r = bx.el.getBoundingClientRect();
     bar.style.display = 'flex'; bar.style.left = Math.max(6, Math.min(r.right - bar.offsetWidth - 6, innerWidth - bar.offsetWidth - 6)) + 'px'; bar.style.top = Math.max(6, r.top + 8) + 'px';
   }
@@ -638,7 +643,8 @@ function __rkStudio(EDITS, MODE) {
   addEventListener('scroll', function () { if (barFor) { var r = barFor.el.getBoundingClientRect(); bar.style.top = Math.max(6, r.top + 8) + 'px'; } }, { passive: true });
   bar.addEventListener('click', function (ev) {
     var b = ev.target.closest('button'); if (!b || !barFor) return;
-    parent.postMessage({ rkTool: { action: b.getAttribute('data-a'), editId: barFor.editId || null, blockId: barFor.blockId || null } }, '*');
+    var br = b.getBoundingClientRect();
+    parent.postMessage({ rkTool: { action: b.getAttribute('data-a'), editId: barFor.editId || null, blockId: barFor.blockId || null, x: br.left, y: br.bottom + 4 } }, '*');
     hideBar();
   });
 
@@ -942,11 +948,13 @@ function renderEditorWs() {
 /* ---- placing: what you drop lands where the page showed it would, with sensible defaults; Undo is one click ---- */
 const snapshotPage = () => JSON.stringify({ edits: B.project.edits || [], blocks: B.project.blocks, btnCss: B.project.btnCss || '', btnFrom: B.project.btnFrom || null });
 function restorePage(snap) { const o = JSON.parse(snap); Object.assign(B.project, o); saveProject(); renderEditorWs(); }
-function toastUndo(msg, snap) {
+function toastUndo(msg, snap, more) {
   let t = $('undoToast'); if (!t) { t = document.createElement('div'); t.id = 'undoToast'; t.className = 'undo-toast'; document.body.appendChild(t); }
-  t.innerHTML = `<span>${esc(msg)}</span><button type="button">Undo</button>`;
-  t.classList.add('show'); clearTimeout(toastUndo.t); toastUndo.t = setTimeout(() => t.classList.remove('show'), 6500);
-  t.querySelector('button').onclick = () => { t.classList.remove('show'); typeof snap === 'function' ? snap() : restorePage(snap); toast('Undone'); };
+  more = (more || []).filter(x => x && x.run);
+  t.innerHTML = `<span>${esc(msg)}</span>${more.map((x, i) => `<button type="button" class="ut-more" data-i="${i}">${esc(x.short || x.label)}</button>`).join('')}<button type="button" class="ut-undo">Undo</button>`;
+  t.classList.add('show'); clearTimeout(toastUndo.t); toastUndo.t = setTimeout(() => t.classList.remove('show'), more.length ? 10000 : 6500);
+  t.querySelector('.ut-undo').onclick = () => { t.classList.remove('show'); typeof snap === 'function' ? snap() : restorePage(snap); toast('Undone'); };
+  t.querySelectorAll('.ut-more').forEach(b => b.onclick = () => { t.classList.remove('show'); more[+b.dataset.i].run(); });
 }
 // Remove a component from the Library. If it's on your page, say so first; it comes off the page too
 // (a component it replaced gives your own section back). Undo puts both back.
@@ -997,7 +1005,11 @@ function placeComp(compId, it) {
     edits.push({ id: newEditId(), target: { scope: it.scope, kind: 'section', idx: 0 }, targetLabel: blockLabel(it.scope), mode: 'after', compId: c.id, recolor, layout: { flow: true, size: 'auto' } });
     edits[edits.length - 1].layout.row = true; msg = `Added “${c.name}” as a new section`;
   } else return;
-  saveProject(); renderEditorWs(); toastUndo(msg, snap);
+  saveProject(); renderEditorWs();
+  // right after a drop: where it should sit, without hunting for a menu
+  const placed = it.kind === 'swap' || it.kind === 'swapblock' ? null : edits[edits.length - 1];
+  const more = placed ? placeItems(placed).map(x => ({ ...x, short: /^Center/.test(x.label) ? 'Center' : /section/.test(x.label) ? 'Own section' : x.label })) : [];
+  toastUndo(msg, snap, more);
   if (!c.tokens) ensureCompTokens(c);   // read its colours for next time (brand-colour matching)
 }
 // anything dropped from outside Reskin (a file, a link, some code) becomes a component first
@@ -1133,6 +1145,11 @@ addEventListener('message', e => {
       else if (t.blockId) { removeBlock(t.blockId); toastUndo('Removed it', snap); }
     }
     if (t.action === 'swap') { S.swapFor = { editId: t.editId, blockId: t.blockId }; renderEditorWs(); toast('Pick the component to swap in — or drag one onto it'); }
+    if (t.action === 'place' && t.editId) {
+      const items = placeItems(editById(t.editId)), fr = $('stFrame').querySelector('iframe').getBoundingClientRect();
+      if (items.length) { CTX_AT.x = fr.left + (t.x || 0); CTX_AT.y = fr.top + (t.y || 0); openCtx(CTX_AT.x, CTX_AT.y, items); }
+      else toast('It sits in a button’s place — swap it, or drag it somewhere else');
+    }
     if (t.action === 'size' && t.editId) {
       const e = editById(t.editId), order = ['auto', 's', 'wide', 'big', 'band', 'full'];
       const L = e.layout || (e.layout = { flow: true, size: 'auto' }), next = order[(order.indexOf(L.size) + 1) % order.length];
@@ -1203,6 +1220,28 @@ function linkTargets(e, part) {
   if (cur) items.push({ label: 'No link — just what it does', icon: '✕', run: () => { links.splice(at, 1); saveProject(); renderStudioPreview(); toast(`“${part.label}” isn’t linked any more`); } });
   return items;
 }
+// Where a placed component sits: centred in its row, or a full-width section of its own. One list, shown after a drop,
+// in the hover toolbar's Place button and in the right-click menu.
+function placeItems(e) {
+  if (!e || !compById(e.compId)) return [];
+  const L = e.layout || { flow: true, size: 'auto' }, own = !!L.row && e.target.kind === 'section', out = [];
+  // in a button's place it already sits where the button was: nothing to centre
+  if (!isClicky(e.target.kind)) out.push({ label: L.center ? 'Back to the side' : 'Center it', icon: '↔', run: () => placeSet(e, 'center') });
+  if (!own) out.push({ label: 'Make it its own section', icon: '▭', hint: 'full width', run: () => placeSet(e, 'section') });
+  return out;
+}
+function placeSet(e, what) {
+  const snap = snapshotPage(), L = e.layout || (e.layout = { flow: true, size: 'auto' });
+  if (what === 'center') { L.center = !L.center; L.flow = true; }
+  if (what === 'section') {
+    // a component that took a button's place leaves that button hidden, not back
+    if (e.mode === 'replace') projectEdits().push({ id: newEditId(), target: e.target, targetLabel: e.targetLabel || '', mode: 'hide' });
+    e.target = { scope: e.target.scope, kind: 'section', idx: 0 }; e.mode = 'after'; e.targetLabel = blockLabel(e.target.scope);
+    L.flow = true; L.row = true; L.size = 'auto'; delete e.action;
+  }
+  saveProject(); renderStudioPreview();
+  toastUndo(what === 'center' ? (L.center ? 'Centred' : 'Back to the side') : 'Now a section of its own', snap);
+}
 function ctxItems(t) {
   const edits = projectEdits(), items = [];
   if (t.editId) {
@@ -1220,6 +1259,7 @@ function ctxItems(t) {
     const canMatch = !!(pageAccent() && c.tokens && (c.tokens.accent || c.tokens.btnBg));
     if (canMatch) items.push({ label: e.recolor ? 'Use its own colours' : 'Match my site’s colours', icon: '◐', run: () => { e.recolor = !e.recolor; saveProject(); renderStudioPreview(); toastUndo(e.recolor ? 'Now in your site’s colours' : 'Back to its own colours', snap); } });
     if (parseProps(c) && parseProps(c).fields.length) items.push({ label: 'More options…', icon: '⚙', hint: 'in Library', run: () => { LIB.detail = c.id; setView('library'); } });
+    const pl = placeItems(e); if (pl.length) items.push('-', ...pl);
     items.push('-');
     items.push({ label: 'Swap for another component', icon: '⇄', run: () => { S.swapFor = { editId: e.id }; renderEditorWs(); } });
     items.push({ label: 'Remove', icon: '✕', danger: true, run: () => { B.project.edits = edits.filter(x => x.id !== t.editId); saveProject(); renderEditorWs(); toastUndo('Removed', snap); } });

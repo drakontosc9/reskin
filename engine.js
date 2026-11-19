@@ -866,6 +866,15 @@ function __rkInspect() {
   function idOf(el) { var l = ids(el); return focusId != null && l.indexOf(String(focusId)) >= 0 ? String(focusId) : l[0]; }
   function partOf(el) { while (el && el.nodeType === 1) { if (el.closest && el.closest('#rk-ins')) return null; if (ids(el).length) return el; el = el.parentElement; } return null; }
   function all(id) { return doc.querySelectorAll('[data-rk-use="' + id + '"],[data-rk-def="' + id + '"],[data-rk-part="' + id + '"]'); }
+  // an empty layer laid over the content (frosted glass, a sheen, a click-catcher): no words, no pictures, nothing
+  // inside. Pointing at it means the part underneath.
+  function veil(el) { return !(el.textContent || '').trim() && !el.querySelector('img,svg,canvas,video,input,textarea,select,button') && !/^(IMG|SVG|CANVAS|VIDEO|INPUT|TEXTAREA|SELECT|BUTTON|PATH|CIRCLE|RECT)$/i.test(el.tagName); }
+  function pickAt(e) {
+    var p = partOf(e.target); if (!p || !veil(p) || !doc.elementsFromPoint) return p;
+    var st = doc.elementsFromPoint(e.clientX, e.clientY);
+    for (var i = 0; i < st.length; i++) { var q = partOf(st[i]); if (q && q !== p && !q.contains(p) && !p.contains(q) && !veil(q)) return q; }
+    return p;
+  }
   function name(el) {
     var t = (el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('alt') || '').trim();
     if (!t) { var own = ''; el.childNodes.forEach(function (c) { if (c.nodeType === 3) own += c.nodeValue; }); t = own.trim(); }
@@ -902,10 +911,10 @@ function __rkInspect() {
     pinned = el; draw();
     if (!quiet) parent.postMessage({ rkInspectPick: el ? { n: +idOf(el), places: ids(el).map(Number), label: name(el), tag: el.tagName.toLowerCase(), count: all(idOf(el)).length, cs: snap(el) } : null }, '*');
   }
-  doc.addEventListener('mousemove', function (e) { var p = partOf(e.target); if (p !== hovered) { hovered = p; draw(); } }, true);
+  doc.addEventListener('mousemove', function (e) { var p = pickAt(e); if (p !== hovered) { hovered = p; draw(); } }, true);
   doc.addEventListener('mouseleave', function () { hovered = null; draw(); });
   ['click', 'pointerdown', 'mousedown', 'pointerup', 'mouseup'].forEach(function (ev) {
-    doc.addEventListener(ev, function (e) { if (e.altKey) return; var p = partOf(e.target); if (!p) return; e.preventDefault(); e.stopPropagation(); if (ev === 'click') pin(p); }, true);
+    doc.addEventListener(ev, function (e) { if (e.altKey) return; var p = partOf(e.target); if (!p) return; e.preventDefault(); e.stopPropagation(); if (ev === 'click') pin(pickAt(e)); }, true);
   });
   doc.addEventListener('keydown', function (e) {
     if (e.key === 'Escape') { pin(null); return; }

@@ -175,8 +175,12 @@ function insRender() {
   const p = INS.panel; if (!p) return;
   const part = INS.map && INS.sel != null ? INS.map.find(x => x.n === INS.sel) : null, k = INS.pick;
   const hist = `<div class="ins-hist"><button class="ghost" id="insUndo" ${INS.undo.length ? '' : 'disabled'} title="Undo (Ctrl+Z)">↶ Undo</button><button class="ghost" id="insRedo" ${INS.redo.length ? '' : 'disabled'}>↷ Redo</button>${INS.undo.length ? `<small>${INS.undo.length} change${INS.undo.length > 1 ? 's' : ''} in its code</small>` : ''}</div>`;
-  if (!INS.map) { p.innerHTML = `<div class="ins-empty"><span class="spin"></span> Reading its parts…</div>${hist}`; return insWire(null); }
-  if (!part || !k) { p.innerHTML = `<div class="ins-empty"><b>Click any part</b> to change it.<br><small>Hover or Tab to see a part · Enter pins it · Esc clears · ↑ selects the part around it · Alt+click uses it normally</small><br><small>${INS.map.length} parts found</small></div>${hist}`; return insWire(null); }
+  // the component's own settings (a lens's blur, bevel, logo…): what can't be clicked — drawn on a canvas, worked out
+  // in code — is usually one of these
+  const P = c_kindTsx() && typeof parseProps === 'function' ? parseProps(compById(INS.compId)) : null, hasSet = !!(P && P.fields.length);
+  const sets = hasSet ? `<details class="ins-sec ins-sets" ${!part || !k || INS.setsOpen ? 'open' : ''}><summary><h4>Its settings <small>→ everywhere it’s used</small></h4></summary><div class="ins-pp"></div></details>` : '';
+  if (!INS.map) { p.innerHTML = `<div class="ins-empty"><span class="spin"></span> Reading its parts…</div>${sets}${hist}`; insSets(); return insWire(null); }
+  if (!part || !k) { p.innerHTML = `<div class="ins-empty"><b>Click any part</b> to change it.<br><small>Hover or Tab to see a part · Enter pins it · Esc clears · ↑ selects the part around it · Alt+click uses it normally</small><br><small>${INS.map.length} parts found</small></div>${sets}${hist}`; insSets(); return insWire(null); }
   const cs = k.cs, svg = /^(path|circle|line|rect|ellipse|polygon|polyline|g|svg|text)$/.test(k.tag);
   const where = part.rule ? `its CSS rule ${part.rule}` : !c_kindTsx() ? 'its style' : part.cls && !part.cls.dynamic ? 'its classes' : part.cls ? 'its style (classes are worked out in code)' : svg ? 'its style' : 'new classes';
   const look = svg ? [
@@ -203,13 +207,23 @@ function insRender() {
     ${part.texts.length ? `<div class="ins-sec"><h4>Words</h4>${part.texts.map((x, i) => `<input class="ins-text" data-text="${i}" value="${esc(x.v)}">`).join('')}</div>` : ''}
     <div class="ins-sec"><h4>Look <small>→ ${where}</small></h4>${look.map(l => ctl(...l)).join('')}</div>
     ${part.lits.length ? `<div class="ins-sec"><h4>From its code</h4>${part.lits.map(litCtl).join('')}</div>` : ''}
+    ${sets}
     <details class="ins-sec ins-code"><summary>Show its code</summary><pre></pre></details>
     ${hist}`;
+  insSets();
   if (c_kindTsx()) { const src = insSource(compById(INS.compId)).text; p.querySelector('pre').textContent = src.slice(part.s, Math.min(part.e, part.s + 600)) + (part.e - part.s > 600 ? '\n…' : ''); }
   else p.querySelector('.ins-code').remove();
   insWire(part);
 }
 const c_kindTsx = () => (compById(INS.compId) || {}).kind === 'tsx';
+function insSets() {
+  const box = INS.panel && INS.panel.querySelector('.ins-pp'), c = compById(INS.compId); if (!box || !c) return;
+  const d = box.closest('details'); d.ontoggle = () => { INS.setsOpen = d.open; };
+  renderPropsPanel(box, c, null, () => {
+    INS.setsOpen = true; insReload();
+    const lib = $('ppBox'); if (lib) renderPropsPanel(lib, c, null, () => renderCompView());   // the Library's copy shows the same values
+  });
+}
 function insWire(part) {
   const p = INS.panel;
   const u = p.querySelector('#insUndo'), r = p.querySelector('#insRedo');

@@ -399,7 +399,7 @@ function literal(v) {
   if (v === 'true' || v === 'false') return { t: 'boolean', v: v === 'true' };
   return null;
 }
-const PP_V = 2;
+const PP_V = 3;
 function parseProps(c) {
   if (c.kind !== 'tsx') return null;
   // cached with the parser's version: when the parser learns something new, saved components are read again
@@ -423,6 +423,30 @@ function parseProps(c) {
     const inner = code.slice(open + 1, close), kids = /(^|[,{\s])children\b/.test(inner) || /\.\.\.\w+/.test(inner);
     if (props.length || kids) found.push({ name, props, type: typed ? typed[1] : null, kids });
   }
+  // settings written other ways: `function Lens(props)` unpacked inside (`const { blur = 8 } = props`, `props.blur ?? 8`),
+  // a defaults object merged in (`{ ...DEFAULTS, ...props }`), or `Lens.defaultProps = { … }`
+  const objFields = txt => splitTop(txt).map(p => /^([A-Za-z_$][\w$]*)\s*[:=]\s*([\s\S]+)$/.exec(p) || /^([A-Za-z_$][\w$]*)$/.exec(p)).filter(Boolean)
+    .filter(x => !SKIP_PROPS.test(x[1])).map(x => ({ name: x[1], def: x[2] != null ? literal(x[2]) : null, raw: x[2] }));
+  const objAt = i => { const o = code.indexOf('{', i); const e = o >= 0 ? matchBrace(code, o) : -1; return e > 0 ? code.slice(o + 1, e) : ''; };
+  const constObj = n => { const m2 = new RegExp('(?:const|let|var)\\s+' + n + '\\s*(?::[^=]+)?=\\s*\\{').exec(code); return m2 ? objAt(m2.index + m2[0].length - 1) : ''; };
+  const pre = /(?:function\s+([A-Z]\w*)\s*(?:<[^>()]*>)?\s*\(\s*(\w+)|const\s+([A-Z]\w*)\s*(?::[^=]+)?=\s*(?:React\.)?(?:(?:forwardRef|memo)\s*(?:<[^()]*?>)?\s*\(\s*)?(?:function\s*\w*\s*)?\(\s*(\w+))\s*(?::\s*[\w$.<>\[\]]+)?\s*[,)]/g;
+  let pm;
+  while ((pm = pre.exec(code))) {
+    const name = pm[1] || pm[3], arg = pm[2] || pm[4]; if (!arg || /^(ref|_)$/.test(arg)) continue;
+    const bo = code.indexOf('{', pre.lastIndex), be = bo >= 0 ? matchBrace(code, bo) : -1, body = be > 0 ? code.slice(bo, be) : code.slice(pre.lastIndex, pre.lastIndex + 4000);
+    const props = [], add = list => list.forEach(p => { if (!props.some(q => q.name === p.name)) props.push(p); });
+    const un = new RegExp('(?:const|let|var)\\s*\\{([^}]*)\\}\\s*=\\s*' + arg + '\\b').exec(body);
+    if (un) add(objFields(un[1]).map(p => ({ ...p, name: p.name })));
+    for (const u of body.matchAll(new RegExp('\\b' + arg + '\\.(\\w+)(?:\\s*(?:\\?\\?|\\|\\|)\\s*(-?[\\d.]+|true|false|"[^"]*"|\'[^\']*\'))?', 'g'))) if (!SKIP_PROPS.test(u[1])) add([{ name: u[1], def: u[2] ? literal(u[2]) : null, raw: u[2] }]);
+    const spread = new RegExp('\\{\\s*\\.\\.\\.(\\w+)\\s*,\\s*\\.\\.\\.' + arg + '\\b').exec(body) || new RegExp('Object\\.assign\\(\\s*\\{\\s*\\}\\s*,\\s*(\\w+)\\s*,\\s*' + arg + '\\b').exec(body);
+    if (spread) add(objFields(constObj(spread[1])));
+    const dp = new RegExp(name + '\\.defaultProps\\s*=\\s*\\{').exec(code); if (dp) add(objFields(objAt(dp.index + dp[0].length - 1)));
+    // a default given in more than one place: keep the one with a value
+    props.forEach(p => { if (!p.def) { const o = objFields(constObj(spread ? spread[1] : '__none__')).find(q => q.name === p.name); if (o) { p.def = o.def; p.raw = o.raw; } } });
+    if (props.length && !found.some(f => f.name === name)) found.push({ name, props, type: null, kids: /\b(?:props|\w+)\.children\b/.test(body) });
+  }
+  // defaultProps for a component whose props were destructured without defaults
+  found.forEach(f => { const dp = new RegExp(f.name + '\\.defaultProps\\s*=\\s*\\{').exec(code); if (!dp) return; objFields(objAt(dp.index + dp[0].length - 1)).forEach(d => { const p = f.props.find(q => q.name === d.name); if (p && !p.def) { p.def = d.def; p.raw = d.raw; } else if (!p) f.props.push(d); }); });
   if (!found.length) { c._pp = { code: c.code, v: PP_V, res: null }; return null; }
   // "the" component: what the file exports by default, else the export named like the component, else the exported one
   // with the most settings — never an internal piece (a compass's single tick) just because it takes more props
@@ -567,7 +591,7 @@ function renderPropsPanel(box, c, owner, onChange) {
   };
   const saveIt = () => { if (owner) saveProject(); else comps.save(); };
   P.fields.forEach(f => {
-    const el = $('pp_' + f.name); if (!el) return;
+    const el = box.querySelector('#pp_' + CSS.escape(f.name)); if (!el) return;   // this box's own controls: the inspector shows a second copy
     if (f.type === 'range') el.oninput = () => { el.nextElementSibling.textContent = el.value; commit(f.name, +el.value); };
     else if (f.type === 'toggle') el.onchange = () => commit(f.name, el.checked, true);
     else if (f.type === 'color') el.oninput = () => { el.nextElementSibling.textContent = el.value; commit(f.name, el.value); };
@@ -582,7 +606,7 @@ function renderPropsPanel(box, c, owner, onChange) {
   box.querySelectorAll('[data-url]').forEach(b => b.onclick = () => { const u = prompt('Picture address (https://…)'); if (u && /^https?:\/\//.test(u.trim())) { mine[b.dataset.url] = u.trim(); saveIt(); onChange(); redraw(); } });
   box.querySelectorAll('[data-clr]').forEach(b => b.onclick = () => { mine[b.dataset.clr] = ''; saveIt(); onChange(); redraw(); });
   box.querySelectorAll('[data-pool]').forEach(b => b.onclick = () => { mine[b.dataset.pool] = resolveSrc(pool[+b.dataset.i].src); saveIt(); onChange(); redraw(); });
-  $('ppReset').onclick = () => { Object.keys(mine).forEach(k => delete mine[k]); saveIt(); onChange(); redraw(); };
+  box.querySelector('#ppReset').onclick = () => { Object.keys(mine).forEach(k => delete mine[k]); saveIt(); onChange(); redraw(); };
 }
 
 /* ------------------------------------------------------------------ 5. grab a part of a page as a component */
