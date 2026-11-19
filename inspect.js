@@ -128,7 +128,7 @@ function htmlInspectDoc(code) {
 }
 
 /* ---- mount: frame + panel ---- */
-function insDoc(c) { return c.kind === 'tsx' ? tsxDoc(c.code, 'comp', typeof mountFor === 'function' ? mountFor(c) : null, { inspect: true }) : htmlInspectDoc(c.code); }
+function insDoc(c) { return c.kind === 'tsx' ? tsxDoc(c.code, 'comp', typeof mountFor === 'function' ? mountFor(c) : null, { inspect: true, libs: c.libs }) : htmlInspectDoc(c.code); }
 function insMount(c, box) {
   if (INS.compId !== c.id) Object.assign(INS, { compId: c.id, sel: null, map: null, pick: null, undo: [], redo: [] });
   box.classList.add('ins-on');

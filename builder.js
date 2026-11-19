@@ -117,7 +117,7 @@ function compBlockDoc(comp, opts) {
 async function ensureCompTokens(c) {
   if (c.tokens && 'btn' in c.tokens) return c.tokens;   // older saves lack the full button style — read those again
   try {
-    const res = await runSandbox(id => c.kind === 'tsx' ? tsxDoc(c.code, id) : withProbe(c.code, id), 20000);
+    const res = await runSandbox(id => c.kind === 'tsx' ? tsxDoc(c.code, id, null, { libs: c.libs }) : withProbe(c.code, id), 20000);
     const t = res.tokens;
     c.tokens = { accent: t.accent, btnBg: t.btn && t.btn.bg, bg: t.bg, text: t.text, btn: t.btn || null };
   } catch { c.tokens = { accent: null, btnBg: null, btn: null }; }

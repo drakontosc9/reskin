@@ -67,7 +67,8 @@ function renderLibrary() {
           const res = await runSandbox(id => kind === 'tsx' ? tsxDoc(code, id) : withProbe(code, id), 20000);
           if (!res || (!res.html || !res.html.replace(/<[^>]+>/g, '').trim()) && !/<(svg|canvas|img)/i.test(res.html || '')) throw new Error('It ran, but showed nothing');
         } catch (e) { $('fzMsg').textContent = `That code didn’t run here: ${e.message}. Check you copied the whole component.`; return; }
-        Object.assign(c, { code, kind, tokens: null, frozen: null, frozenV: 2, catV: 0, source: c.source === 'grabbed' ? 'pasted' : c.source });
+        Object.assign(c, { code, kind, tokens: null, libs: null, frozen: null, frozenV: 2, catV: 0, source: c.source === 'grabbed' ? 'pasted' : c.source });
+        if (kind === 'tsx') { $('fzMsg').textContent = 'Checking our libraries…'; await checkLibraries(c); }
         comps.save(); toast(`“${c.name}” now runs its real code — everywhere it’s used`); renderLibrary();
       };
     }
@@ -118,6 +119,7 @@ function libraryPatchComps() {
   let visible = 0;
   $('comps').querySelectorAll('.ctile').forEach((t, i) => {
     const c = shown[i]; if (!c) return;
+    ensureLibs(c, () => { if (state.view === 'library') renderComps(); });
     const fz = frozenInfo(c);
     if (fz && !t.querySelector('.frozen-tag')) t.querySelector('.cthumb').insertAdjacentHTML('beforeend', `<span class="frozen-tag" title="${esc(fz.why)}">❄ Snapshot — doesn’t react</span>`);
     const on = LIB.cat === 'all' || compCat(c) === LIB.cat;
@@ -397,13 +399,15 @@ function literal(v) {
   if (v === 'true' || v === 'false') return { t: 'boolean', v: v === 'true' };
   return null;
 }
+const PP_V = 2;
 function parseProps(c) {
   if (c.kind !== 'tsx') return null;
-  if (c._pp && c._pp.code === c.code) return c._pp.res;
+  // cached with the parser's version: when the parser learns something new, saved components are read again
+  if (c._pp && c._pp.code === c.code && c._pp.v === PP_V) return c._pp.res;
   const code = splitBundle(c.code).js;
   // every component that takes destructured props; the one with the most props is "the" component
   const found = [];
-  const re = /(?:export\s+(?:default\s+)?)?(?:function\s+([A-Z]\w*)\s*\(|const\s+([A-Z]\w*)\s*(?::[^=]+)?=\s*(?:React\.)?(?:forwardRef\s*\(\s*)?(?:memo\s*\(\s*)?\(?)\s*\{/g;
+  const re = /(?:export\s+(?:default\s+)?)?(?:function\s+([A-Z]\w*)\s*(?:<[^>()]*>)?\s*\(|const\s+([A-Z]\w*)\s*(?::[^=]+)?=\s*(?:React\.)?(?:(?:forwardRef|memo)\s*(?:<[^()]*?>)?\s*\(\s*(?:(?:React\.)?(?:forwardRef|memo)\s*(?:<[^()]*?>)?\s*\(\s*)?(?:function\s*\w*\s*)?)?\(?)\s*\{/g;
   let m;
   while ((m = re.exec(code))) {
     const name = m[1] || m[2], open = re.lastIndex - 1, close = matchBrace(code, open);
@@ -415,10 +419,17 @@ function parseProps(c) {
       if (!mm || SKIP_PROPS.test(mm[1])) return;
       props.push({ name: mm[1], def: mm[2] != null ? literal(mm[2]) : null, raw: mm[2] });
     });
-    if (props.length) found.push({ name, props });
+    const typed = /^\s*:\s*([A-Z]\w*)/.exec(code.slice(close + 1, close + 120)) || /(?:forwardRef|memo)\s*<[^,>]+,\s*([A-Z]\w*)/.exec(m[0]);   // ({ … }: Props) or forwardRef<El, Props>
+    const inner = code.slice(open + 1, close), kids = /(^|[,{\s])children\b/.test(inner) || /\.\.\.\w+/.test(inner);
+    if (props.length || kids) found.push({ name, props, type: typed ? typed[1] : null, kids });
   }
-  if (!found.length) { c._pp = { code: c.code, res: null }; return null; }
-  const main = found.sort((a, b) => b.props.length - a.props.length)[0];
+  if (!found.length) { c._pp = { code: c.code, v: PP_V, res: null }; return null; }
+  // "the" component: what the file exports by default, else the export named like the component, else the exported one
+  // with the most settings — never an internal piece (a compass's single tick) just because it takes more props
+  const def = (/export\s+default\s+(?:function\s+|const\s+)?([A-Z]\w*)/.exec(code) || [])[1];
+  const exported = new Set([...code.matchAll(/export\s+(?:const|function)\s+([A-Z]\w*)/g)].map(x => x[1]).concat(...[...code.matchAll(/export\s*\{([^}]*)\}/g)].map(x => x[1].split(',').map(y => y.trim().split(/\s+as\s+/).pop()))));
+  const key = String(c.name || '').replace(/[^a-z0-9]/gi, '').toLowerCase(), most = (a, b) => b.props.length - a.props.length;
+  const main = found.find(f => f.name === def) || found.find(f => f.name.toLowerCase() === key) || found.filter(f => exported.has(f.name)).sort(most)[0] || found.sort(most)[0];
   // what the component itself tells us about each prop
   const arrays = [...code.matchAll(/const\s+\w+\s*=\s*\[([^\]]*)\]/g)].map(x => [...x[1].matchAll(/['"]([^'"]+)['"]/g)].map(y => y[1])).filter(x => x.length > 1);
   const seed = {};
@@ -447,21 +458,80 @@ function parseProps(c) {
     else return null;
     return f;
   }).filter(Boolean);
-  const res = { main: main.name, fields, seed };
-  c._pp = { code: c.code, res };
+  // shows what you put inside it (a button's words): give it words, or it renders empty
+  const kids = main.kids && (/\{\s*children\s*\}|\{\.\.\.\w+\}/.test(code));
+  const res = { main: main.name, fields, seed, samples: sampleProps(code, main), kids };
+  c._pp = { code: c.code, v: PP_V, res };
   return res;
 }
 // the props a component shows with: what its own code passes in its demo, then its Library settings, then this placement's
 function mountFor(c, extra) {
-  const P = parseProps(c); if (!P || !P.fields.length) return null;
+  const P = parseProps(c); if (!P || (!P.fields.length && !P.kids)) return null;
   const props = { ...P.seed, ...(c.props || {}), ...(extra || {}) };
-  // a prop with no value and no default would leave it blank: fill it by kind, never by component
+  // required settings with no value would crash it or leave it blank: fill them from their types (a list of links
+  // gets your site's own menu), else by kind — never by component
+  const S = typeof P.samples === 'function' ? P.samples() : P.samples || {}, TY = (P.samples && P.samples.types) || {};
+  Object.keys(S).forEach(k => { if (!(k in props)) props[k] = S[k]; });
+  if (P.kids && !('children' in props)) { const m = typeof state !== 'undefined' && state.model; props.children = (m && m.navCta && m.navCta.text) || (m && m.hero && m.hero.buttons && m.hero.buttons[0] && m.hero.buttons[0].text) || 'Get started'; }
   P.fields.forEach(f => {
     if (f.name in props || f.def !== undefined) return;
     if (f.type === 'image') props[f.name] = placeholderImage();
-    else if (f.type === 'text') props[f.name] = f.label;
+    else if (f.type === 'text' && (!TY[f.name] || /^string\b/.test(TY[f.name]))) props[f.name] = f.label;   // a number setting never gets words
   });
   return Object.keys(props).length ? { name: P.main, props } : null;
+}
+// Sample values for required settings, read from the component's TypeScript types: `links: CompassNavLink[]` with
+// { label, href, angle } becomes a few real-looking links — your site's menu when it has one.
+function sampleProps(code, main) {
+  if (!main || !main.type) return {};
+  const body = name => {
+    const m = new RegExp(`(?:interface\\s+${name}\\b[^{]*|type\\s+${name}\\s*=\\s*)\\{`).exec(code); if (!m) return null;
+    const open = m.index + m[0].length - 1, close = matchBrace(code, open); return close > 0 ? code.slice(open + 1, close) : null;
+  };
+  const fieldsOf = txt => {
+    const out = []; if (!txt) return out;
+    txt = txt.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    splitTop(txt.replace(/;/g, ',').replace(/\n/g, ',')).forEach(part => { const m = /^\s*(?:readonly\s+)?([A-Za-z_$][\w$]*)(\?)?\s*:\s*([\s\S]+)$/.exec(part); if (m) out.push({ name: m[1], opt: !!m[2], type: m[3].trim() }); });
+    return out;
+  };
+  const own = fieldsOf(body(main.type)), defaults = new Set(main.props.filter(p => p.def != null || p.raw != null).map(p => p.name));
+  const LINKY = /^(label|title|name|text)$/i, HREF = /^(href|url|link|to|path)$/i;
+  const value = (f, i, n, nav) => {
+    const k = f.name, t = f.type;
+    if (/\[\]$|^Array</.test(t)) return undefined;
+    if (/^(number|bigint)\b/.test(t)) return /angle|deg|bearing|rotation|heading/i.test(k) ? Math.round(i * 360 / Math.max(n, 1)) : /index|order|position/i.test(k) ? i : i + 1;
+    if (/^boolean\b/.test(t)) return i === 0 && /active|selected|current|open/i.test(k);
+    if (/^string\b|^['"]/.test(t) || !/[A-Z(<{]/.test(t[0])) {
+      if (/^['"]/.test(t)) return (/^['"]([^'"]*)['"]/.exec(t) || [])[1];
+      if (HREF.test(k)) return nav ? nav.href : '#';
+      if (LINKY.test(k)) return nav ? nav.text : `Item ${i + 1}`;
+      if (/^(id|key|value|slug)$/i.test(k)) return nav ? nav.text.toLowerCase().replace(/\W+/g, '-') : `item-${i + 1}`;
+      if (/desc|subtitle|caption|body|content/i.test(k)) return 'A short line about this item.';
+      if (/src|image|img|photo|avatar|cover|thumb/i.test(k)) return placeholderImage();
+      if (/colou?r/i.test(k)) return '#6d5efc';
+      return /icon/i.test(k) ? undefined : `${k.replace(/([a-z])([A-Z])/g, '$1 $2')}`;
+    }
+    return undefined;
+  };
+  // computed when mounted, so a list of links follows the site loaded at that moment
+  const fn = () => {
+    const out = {}, nav = typeof state !== 'undefined' && state.model && state.model.nav && state.model.nav.length >= 2 ? state.model.nav.slice(0, 8) : null;
+    own.forEach(f => {
+      if (f.opt || defaults.has(f.name) || SKIP_PROPS.test(f.name)) return;
+      const arr = /^(?:readonly\s+)?([A-Z]\w*)\[\]$|^Array<([A-Z]\w*)>$/.exec(f.type);
+      if (arr) {
+        const item = fieldsOf(body(arr[1] || arr[2])); if (!item.length) return;
+        const linky = item.some(x => LINKY.test(x.name)) && item.some(x => HREF.test(x.name));
+        const src = linky && nav ? nav : Array.from({ length: 5 }, () => null), n = src.length;
+        out[f.name] = src.map((nv, i) => { const o = {}; item.forEach(x => { const v = value(x, i, n, nv); if (v !== undefined && (!x.opt || HREF.test(x.name) || LINKY.test(x.name) || /angle|deg/i.test(x.name))) o[x.name] = v; }); return o; });
+      } else {
+        const v = value(f, 0, 1, null); if (v !== undefined) out[f.name] = v;
+      }
+    });
+    return out;
+  };
+  fn.types = Object.fromEntries(own.map(f => [f.name, f.type]));
+  return fn;
 }
 // a picture from the user's own site if there is one, else a soft neutral placeholder
 function placeholderImage() {

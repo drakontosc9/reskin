@@ -748,10 +748,11 @@ function __shims(R) {
 function __rkMount(mod, onEmpty) {
   var R = window.React, root = document.getElementById('root');
   var C = mod && mod['default'], P = {}, M = window.__RK_MOUNT, wrap = false;
-  if (typeof C !== 'function' && mod) { C = null; for (var k in mod) if (typeof mod[k] === 'function' && /^[A-Z]/.test(k)) { C = mod[k]; break; } }
+  var isComp = function (x) { return typeof x === 'function' || (x && typeof x === 'object' && x.$$typeof); };   // forwardRef / memo are objects
+  if (!isComp(C) && mod) { C = null; for (var k in mod) if (isComp(mod[k]) && /^[A-Z]/.test(k)) { C = mod[k]; break; } }
   // component settings: show the chosen component itself, with the chosen props, centred
   if (M && mod) {
-    var pick = typeof mod[M.name] === 'function' ? mod[M.name] : mod['default'] && mod['default'].name === M.name ? mod['default'] : null;
+    var pick = isComp(mod[M.name]) ? mod[M.name] : mod['default'] && (mod['default'].name === M.name || mod['default'].displayName === M.name) ? mod['default'] : null;
     if (pick) { C = pick; P = M.props || {}; wrap = true; }
   }
   if (C && !root.children.length) {
@@ -1506,15 +1507,70 @@ function splitBundle(code) {
   }
   return { js, css };
 }
+/* ---- the libraries a component needs ("Checking our libraries…") ----
+   Components are written against a styling setup: Tailwind 3 or 4, and colour/motion variables defined by the
+   site they come from. Reskin works out which, once, and every frame that shows the component (Library card,
+   your page, popups, the download) loads the same thing: c.libs = { tw: 3|4, vars: ':root{…}', from }. */
+const TW4_SRC = 'https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.1.11/dist/index.global.js';
+// Only strong signs: guessing Tailwind 4 wrongly breaks a component silently, so anything unclear stays on 3
+function wantsTw4(code) { return /@theme\b|@import\s+["']tailwindcss["']|\b(bg|from|via|to)-linear-to-|\b[a-z][\w-]*-\(--[\w-]+\)|@custom-variant|\binset-shadow-|\btext-shadow-(2xs|xs|sm|md|lg)\b/.test(code); }
+// custom properties the component reads: var(--x), Tailwind 4's (--x), and [--x:…]
+function usedVars(code) { const s = new Set(); for (const m of code.matchAll(/(?:var\(|\(|\[)(--[\w-]+)/g)) s.add(m[1]); return [...s]; }
+// a site's light-theme custom properties (:root, html, :host — also inside @layer), first value wins
+function themeVarsFromCss(css) {
+  const out = {};
+  for (const m of css.matchAll(/(?:^|[{};])\s*((?::root|html|:host)(?:\s*,\s*(?::root|html|:host))*)\s*\{([^{}]*)\}/g))
+    for (const d of m[2].matchAll(/(--[\w-]+)\s*:\s*([^;{}]+)/g)) if (!(d[1] in out)) out[d[1]] = d[2].trim();
+  return out;
+}
+// the variables a component needs from a theme, plus whatever those refer to (--color-accent: var(--accent))
+function varsFor(code, theme) {
+  const need = new Set(usedVars(code)), out = {};
+  for (let i = 0; i < 4; i++) [...need].forEach(n => { const v = theme[n]; if (v != null && !(n in out)) { out[n] = v; for (const r of v.matchAll(/var\((--[\w-]+)/g)) need.add(r[1]); } });
+  return out;
+}
+// anything still undefined gets a sensible value by its name, so nothing renders invisible
+function fallbackVar(n) {
+  const k = n.toLowerCase();
+  if (/dur|duration|speed/.test(k)) return /slow|long/.test(k) ? '.4s' : /fast|short|quick/.test(k) ? '.15s' : '.25s';
+  if (/ease|easing|curve/.test(k)) return 'cubic-bezier(.2,.7,.2,1)';
+  if (/radius|rounded/.test(k)) return '12px';
+  if (/font|family/.test(k)) return 'inherit';
+  if (/destructive|danger|error|red/.test(k)) return '#e5484d';
+  if (/success|green/.test(k)) return '#30a46c';
+  if (/warn|amber|yellow/.test(k)) return '#f5a524';
+  if (/(^--|-)(fg|foreground|text|ink)\b|-fg-|foreground/.test(k)) return '#171717';
+  if (/muted|subtle|secondary-fg|placeholder/.test(k)) return '#737373';
+  if (/border|line|ring|stroke|divider/.test(k)) return '#e5e5e5';
+  if (/accent|primary|brand/.test(k)) return '#171717';
+  if (/surface|card|panel|popover|elevated|-2\b|muted/.test(k)) return '#f5f5f5';
+  if (/bg|background|canvas|base/.test(k)) return '#fafafa';
+  return null;
+}
+function varsCss(vars) { const e = Object.entries(vars || {}); return e.length ? ':root{' + e.map(([k, v]) => `${k}:${v}`).join(';') + '}' : ''; }
+// shadcn's colour names for Tailwind 4 (it has no tailwind.config: names come from @theme)
+const TW4_THEME_HSL = `@custom-variant dark (&:where(.dark, .dark *));
+@theme inline{--color-background:hsl(var(--background));--color-foreground:hsl(var(--foreground));--color-card:hsl(var(--card));--color-card-foreground:hsl(var(--card-foreground));--color-popover:hsl(var(--popover));--color-popover-foreground:hsl(var(--popover-foreground));--color-primary:hsl(var(--primary));--color-primary-foreground:hsl(var(--primary-foreground));--color-secondary:hsl(var(--secondary));--color-secondary-foreground:hsl(var(--secondary-foreground));--color-muted:hsl(var(--muted));--color-muted-foreground:hsl(var(--muted-foreground));--color-accent:hsl(var(--accent));--color-accent-foreground:hsl(var(--accent-foreground));--color-destructive:hsl(var(--destructive));--color-border:hsl(var(--border));--color-input:hsl(var(--input));--color-ring:hsl(var(--ring));--radius-lg:var(--radius);--radius-md:calc(var(--radius) - 2px);--radius-sm:calc(var(--radius) - 4px)}`;
+// themes that define plain colours (--background: #fafafa) are used as they are
+const tw4Theme = vars => {
+  const v = vars && (vars['--background'] || vars['--primary']);
+  return v && !/^\s*[\d.]+\s+[\d.]+%/.test(v) ? TW4_THEME_HSL.replace(/hsl\((var\(--[\w-]+\))\)/g, '$1') : TW4_THEME_HSL;
+};
 // mount (optional): { name, props } — show that component with those props (Studio's component settings)
 // opt.inspect: click-to-edit mode — compile with source tags and run the part inspector
+// opt.libs: the component's libraries (c.libs) — Tailwind 4 and its theme variables when it needs them
 function tsxDoc(code, id, mount, opt = {}) {
   const bundle = splitBundle(code);
   code = bundle.js;
   const dark = /\bclassName=["'`][^"'`]*\bdark\b/.test(code) ? 'dark' : '';
+  const L = opt.libs || {}, vars = varsCss(L.vars).replace(/<\/style/gi, '');
+  // a theme's own colour names (--accent, --background) win over shadcn's defaults, so they come last
+  const styling = L.tw === 4
+    ? `<script src="${TW4_SRC}"><\/script><style type="text/tailwindcss">${tw4Theme(L.vars)}</style><style>${SHADCN_CSS}</style>`
+    : `<script src="https://cdn.tailwindcss.com/3.4.16"><\/script><script>${TW_CONFIG}<\/script><style>${SHADCN_CSS}</style>`;
   return `<!doctype html><html class="${dark}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <script type="importmap">${JSON.stringify(IMPORT_MAP)}<\/script>
-<script src="https://cdn.tailwindcss.com/3.4.16"><\/script><script>${TW_CONFIG}<\/script><style>${SHADCN_CSS}</style><style>${bundle.css.replace(/<\/style/gi, '')}</style>
+${styling}${vars ? `<style>${vars}</style>` : ''}<style>${bundle.css.replace(/<\/style/gi, '')}</style>
 <script src="https://unpkg.com/@babel/standalone@7.26.4/babel.min.js"><\/script>
 </head><body><div id="root"></div>
 <script>(${__probe})(${jsonForScript(id)}, false, 6000);<\/script>

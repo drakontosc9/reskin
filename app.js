@@ -578,6 +578,8 @@ async function importByLink(raw) {
     return out;
   }
   if (host === '21st.dev') {
+    const seg = url.pathname.split('/').filter(Boolean);
+    if (seg.length >= 2 && seg[0] !== 'r') { try { const got = await fromRegistry(`${url.origin}/r/${seg[0]}/${seg[1]}`, url); if (got) return got; } catch {} }
     const page = await siteText(url.href);
     const blocks = [...page.matchAll(/<pre class="shiki[^"]*"[^>]*><code>([\s\S]*?)<\/code><\/pre>/g)].map(m => {
       return new DOMParser().parseFromString(m[1], 'text/html').body.textContent;
@@ -591,18 +593,101 @@ async function importByLink(raw) {
     const code = await siteText(url.href), name = url.pathname.split('/').pop();
     return [{ name: titleCase(name.replace(/\.\w+$/, '')), source: 'GitHub', url: url.href, kind: detectKind(code, name), code }];
   }
-  throw new Error('Links from uiverse.io, mui.com, 21st.dev or raw GitHub files are supported — for anything else, paste the code');
+  {
+    const seg = url.pathname.split('/').filter(Boolean), last = (seg[seg.length - 1] || '').replace(/\.json$/, '');
+    const tries = /\/r\/[^/]+(\.json)?$/.test(url.pathname) ? [url.href] : last ? [`${url.origin}/r/${last}.json`, `${url.origin}/r/${last}`] : [];
+    for (const t of tries) { try { const got = await fromRegistry(t, url); if (got) return got; } catch {} }
+  }
+  throw new Error('Links from uiverse.io, mui.com, 21st.dev, shadcn-style registries or raw GitHub files are supported — for anything else, paste the code');
+}
+// A shadcn-style registry item (/r/<name>.json): its code, the packages it needs, and its theme variables
+async function fromRegistry(jsonUrl, page) {
+  let d; try { d = JSON.parse(await siteText(jsonUrl)); } catch { return null; }
+  const files = (d && d.files || []).filter(f => f && typeof f.content === 'string');
+  const main = files.find(f => /\.(tsx|jsx)$/.test(f.path || '') && /registry:(ui|component|block|example)/.test(f.type || '')) || files.find(f => /\.(tsx|jsx)$/.test(f.path || ''));
+  if (!main) return null;
+  // style files ride along the way bundled exports do ("/* ---- x.css ---- */"); other code files can't be resolved yet
+  const css = files.filter(f => /\.css$/.test(f.path || '')).map(f => `\n/* ---- ${f.path.split('/').pop()} ---- */\n${f.content}`).join('');
+  const vars = {};
+  if (d.cssVars) { Object.assign(vars, d.cssVars.theme || {}, d.cssVars.light || {}); }
+  const cv = {}; Object.entries(vars).forEach(([k, v]) => { cv[k.startsWith('--') ? k : '--' + k] = String(v); });
+  const others = files.filter(f => f !== main && /\.(tsx?|jsx?)$/.test(f.path || '')).length;
+  return [{ name: d.title || titleCase(d.name || main.path.split('/').pop().replace(/\.\w+$/, '')), source: new URL(page.href).hostname.replace(/^www\./, ''), url: page.href, kind: 'tsx',
+    code: main.content + css, deps: d.dependencies || [], registry: { json: jsonUrl, origin: new URL(jsonUrl).origin, cssVars: cv, description: d.description || '' },
+    note: others ? `This component comes with ${others} more code file${others > 1 ? 's' : ''} Reskin can't link up yet; parts that depend on them use stand-ins.` : undefined }];
 }
 
-function addComps(items) {
+/* ---- "Checking our libraries…": what an import needs to look right, worked out once and saved with it ---- */
+const SHADCN_VARS = new Set([...SHADCN_CSS.matchAll(/(--[\w-]+):/g)].map(m => m[1]));
+const siteThemes = new Map();   // origin -> its theme variables (one fetch per site)
+async function themeOfSite(origin) {
+  if (siteThemes.has(origin)) return siteThemes.get(origin);
+  const p = (async () => {
+    const html = await siteText(origin + '/'), theme = {};
+    const hrefs = [...html.matchAll(/<link[^>]+rel=["']?stylesheet["']?[^>]*>/gi)].map(m => (/href=["']([^"']+)/.exec(m[0]) || [])[1]).filter(Boolean)
+      .concat([...html.matchAll(/href=["']([^"']+\.css(?:\?[^"']*)?)["']/gi)].map(m => m[1]));
+    for (const h of [...new Set(hrefs)].slice(0, 6)) { try { Object.entries(themeVarsFromCss(await siteText(new URL(h, origin + '/').href))).forEach(([k, v]) => { if (!(k in theme)) theme[k] = v; }); } catch {} }
+    for (const m of html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/gi)) Object.entries(themeVarsFromCss(m[1])).forEach(([k, v]) => { if (!(k in theme)) theme[k] = v; });
+    return theme;
+  })().catch(() => ({}));
+  siteThemes.set(origin, p); return p;
+}
+async function checkLibraries(c, say) {
+  if (c.kind !== 'tsx') return c;
+  const code = splitBundle(c.code).js + '\n' + splitBundle(c.code).css, steps = [];
+  const tw = wantsTw4(code) ? 4 : 3;
+  if (tw === 4) steps.push('Tailwind 4');
+  const deps = [...new Set([...(c.deps || []), ...[...code.matchAll(/from\s+['"]([^'"./@][^'"]*|@[^'"/]+\/[^'"]+)['"]/g)].map(m => m[1].split('/').slice(0, m[1].startsWith('@') ? 2 : 1).join('/'))])].filter(d => !/^(react|react-dom|next)$/.test(d));
+  if (deps.length) steps.push(deps.slice(0, 3).join(', ') + (deps.length > 3 ? ` +${deps.length - 3}` : ''));
+  say && say(steps);
+  // colour / motion variables: the registry's own, then the site it comes from, then sensible values by name
+  let vars = { ...(c.registry && c.registry.cssVars || {}) }, from = null;
+  const missing = () => usedVars(code).filter(n => !(n in vars) && !SHADCN_VARS.has(n) && !new RegExp(`${n.replace(/[-]/g, '\\-')}\\s*:`).test(code));
+  const origin = c.registry ? c.registry.origin : c.url ? (() => { try { return new URL(c.url).origin; } catch { return null; } })() : null;
+  if (missing().length && origin) {
+    say && say([...steps, 'theme from ' + new URL(origin).hostname]);
+    const theme = await themeOfSite(origin), got = varsFor(code, theme);
+    if (Object.keys(got).length) { vars = { ...got, ...vars }; from = new URL(origin).hostname; }
+  }
+  const guessed = missing(); guessed.forEach(n => { const v = fallbackVar(n); if (v) vars[n] = v; });
+  c.libs = { tw, vars: Object.keys(vars).length ? vars : null, from, guessed: guessed.length || 0, deps };
+  // one real render with those libraries: it also reads the component's colours for later (brand matching)
+  try { const res = await runSandbox(id => tsxDoc(c.code, id, typeof mountFor === 'function' ? mountFor(c) : null, { libs: c.libs }), 25000); if (res && res.tokens) { const t = res.tokens; c.tokens = { accent: t.accent, btnBg: t.btn && t.btn.bg, bg: t.bg, text: t.text, btn: t.btn || null }; } c.libs.ok = true; }
+  catch (e) { c.libs.ok = false; c.libs.why = String(e.message || e).slice(0, 160); }
+  return c;
+}
+const libsLine = c => { const L = c.libs; if (!L) return ''; const b = []; if (L.tw === 4) b.push('Tailwind 4'); if (L.from) b.push(`${L.from} colours`); if (L.deps && L.deps.length) b.push(L.deps.slice(0, 2).join(', ')); return b.join(' · '); };
+// components saved before library checking existed: check once in the background, then redraw what shows them
+const libQueue = new Set();
+function ensureLibs(c, after) {
+  if (!c || c.kind !== 'tsx' || c.libs || libQueue.has(c.id)) return;
+  libQueue.add(c.id);
+  checkLibraries(c).then(() => { libQueue.delete(c.id); comps.save(); after && after(); }).catch(() => libQueue.delete(c.id));
+}
+// every import passes through here: show "Checking our libraries…", then save
+async function readyComps(items) {
+  const code = items.filter(c => c.kind === 'tsx');
+  if (!code.length) return items;
+  let t = $('libCheck'); if (!t) { t = document.createElement('div'); t.id = 'libCheck'; t.className = 'lib-check'; t.setAttribute('role', 'status'); document.body.appendChild(t); }
+  const show = (name, steps) => { t.innerHTML = `<i class="lc-spin" aria-hidden="true"></i><span><b>Checking our libraries…</b>${name ? ` <small>${esc(name)}</small>` : ''}${steps && steps.length ? `<em>adding ${esc(steps.join(' · '))}</em>` : ''}</span>`; t.classList.add('show'); };
+  try { for (const c of code) { show(c.name, []); await checkLibraries(c, steps => show(c.name, steps)); } }
+  finally { t.classList.remove('show'); }
+  return items;
+}
+
+
+async function addComps(items) {
   const coll = $('cColl') ? $('cColl').value : 'My kit';
+  await readyComps(items);
   items.forEach(c => comps.list.unshift({ id: newId(), collection: coll, created: Date.now(), ...c }));
   comps.save();
   renderComps();
-  toast(items.length > 1 ? `Saved ${items.length} components to “${coll}”` : `Saved “${items[0].name}” to “${coll}”`);
+  const bad = items.filter(c => c.libs && c.libs.ok === false), extra = items.length === 1 && libsLine(items[0]);
+  toast((items.length > 1 ? `Saved ${items.length} components to “${coll}”` : `Saved “${items[0].name}” to “${coll}”`) + (extra ? ` · ${extra}` : '') +
+    (bad.length ? ` — ${bad.length > 1 ? bad.length + ' of them' : 'it'} didn’t render here yet: ${bad[0].libs.why}` : ''), bad.length || extra ? 6000 : 3000);
 }
 // extra: props for this one placement (Studio), on top of the component's own settings (Library)
-const compDoc = (c, extra) => c.kind === 'tsx' ? tsxDoc(c.code, 'comp', typeof mountFor === 'function' ? mountFor(c, extra) : null) : reviveSaved(c.code);
+const compDoc = (c, extra) => c.kind === 'tsx' ? tsxDoc(c.code, 'comp', typeof mountFor === 'function' ? mountFor(c, extra) : null, { libs: c.libs }) : reviveSaved(c.code);
 // Page-saving extensions (SavePage WE) switch every script off when they save: type="text/plain".
 // Scripts that were saved *inside* the file are turned back on; ones that lived on the original site can't load
 // from here (the browser blocks them), and analytics are left off.
@@ -721,7 +806,7 @@ async function useKitAsDesign(coll) {
   toast(`Sampling ${items.length} components from “${coll}”…`, 4000);
   const toks = [];
   for (const c of items) {
-    try { const res = await runSandbox(id => c.kind === 'tsx' ? tsxDoc(c.code, id) : withProbe(c.code, id), 20000); toks.push(res.tokens); } catch {}
+    try { const res = await runSandbox(id => c.kind === 'tsx' ? tsxDoc(c.code, id, null, { libs: c.libs }) : withProbe(c.code, id), 20000); toks.push(res.tokens); } catch {}
   }
   busy(null);
   if (!toks.length) { toast('None of the components in this collection could be read', 4000); return; }

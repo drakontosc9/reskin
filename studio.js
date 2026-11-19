@@ -724,6 +724,7 @@ function elemDoc(c, e, mode, act) {
 function studioScript(p, mode) {
   const edits = (p.edits || []).map(e => {
     const c = e.compId && compById(e.compId), inline = isClicky(e.target.kind);
+    if (c && mode === 'edit') ensureLibs(c, () => { if (state.view === 'studio') renderStudioPreview(); });
     const pc = e.action && e.action.type === 'popup' && compById(e.action.compId);
     return {
       id: e.id, target: e.target, mode: e.mode, inline, action: e.action || null, layout: e.layout || { flow: true, size: 'auto' }, text: e.mode === 'text' ? e.text : undefined, style: e.mode === 'style' ? e.style : undefined,
@@ -975,6 +976,7 @@ function removeComp(id) {
 }
 function placeComp(compId, it) {
   const c = compById(compId); if (!c || !it) return;
+  ensureLibs(c, () => { if (state.view === 'studio') renderStudioPreview(); });
   const snap = snapshotPage(), edits = projectEdits(), recolor = !!(brandColor() && c.tokens && (c.tokens.accent || c.tokens.btnBg));
   let msg = '';
   if (it.kind === 'swap') {
@@ -1015,6 +1017,7 @@ async function importDropped(files, text) {
       else if (/[<{]|^\s*(import|export|const|function)\b/.test(text)) { const kind = detectKind(text); items.push({ name: titleCase(((/(?:function|const)\s+([A-Z]\w*)/.exec(text) || [])[1] || 'Pasted component').replace(/([a-z])([A-Z])/g, '$1 $2')), source: 'pasted', kind, code: text }); }
     }
     if (!items.length) { if (text || (files && files.length)) toast('That isn’t a component Reskin can use — try a link, code, an .html/.tsx file or a picture', 4500); return null; }
+    await readyComps(items);
     items.forEach(c => comps.list.unshift({ id: newId(), collection: 'My kit', created: Date.now(), ...c }));
     comps.save();
     return comps.list[0].id;
