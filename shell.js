@@ -403,7 +403,8 @@ const PP_V = 3;
 function parseProps(c) {
   if (c.kind !== 'tsx') return null;
   // cached with the parser's version: when the parser learns something new, saved components are read again
-  if (c._pp && c._pp.code === c.code && c._pp.v === PP_V) return c._pp.res;
+  // (a cache read back from storage has lost its sample filler, a function: read the code again)
+  if (c._pp && c._pp.code === c.code && c._pp.v === PP_V && (!c._pp.res || typeof c._pp.res.samples === 'function')) return c._pp.res;
   const code = splitBundle(c.code).js;
   // every component that takes destructured props; the one with the most props is "the" component
   const found = [];
@@ -496,6 +497,8 @@ function mountFor(c, extra) {
   // gets your site's own menu), else by kind — never by component
   const S = typeof P.samples === 'function' ? P.samples() : P.samples || {}, TY = (P.samples && P.samples.types) || {};
   Object.keys(S).forEach(k => { if (!(k in props)) props[k] = S[k]; });
+  // a required setting nothing can fill: show the component the way its own file does (its demo), not crashed
+  if ((S.__missing || []).some(k => !(k in props))) return null;
   if (P.kids && !('children' in props)) { const m = typeof state !== 'undefined' && state.model; props.children = (m && m.navCta && m.navCta.text) || (m && m.hero && m.hero.buttons && m.hero.buttons[0] && m.hero.buttons[0].text) || 'Get started'; }
   P.fields.forEach(f => {
     if (f.name in props || f.def !== undefined) return;
@@ -539,12 +542,16 @@ function sampleProps(code, main) {
   };
   // computed when mounted, so a list of links follows the site loaded at that moment
   const fn = () => {
-    const out = {}, nav = typeof state !== 'undefined' && state.model && state.model.nav && state.model.nav.length >= 2 ? state.model.nav.slice(0, 8) : null;
+    const out = {}, missing = [], nav = typeof state !== 'undefined' && state.model && state.model.nav && state.model.nav.length >= 2 ? state.model.nav.slice(0, 8) : null;
+    Object.defineProperty(out, '__missing', { value: missing });   // not a prop: required settings no sample could fill
     own.forEach(f => {
       if (f.opt || defaults.has(f.name) || SKIP_PROPS.test(f.name)) return;
       const arr = /^(?:readonly\s+)?([A-Z]\w*)\[\]$|^Array<([A-Z]\w*)>$/.exec(f.type);
       if (arr) {
         const item = fieldsOf(body(arr[1] || arr[2])); if (!item.length) return;
+        // an item needs something Reskin can't make up (an icon component, a function): half-made items would crash it,
+        // so leave the list to the component's own demo
+        if (item.some(x => !x.opt && value(x, 0, 1, nav ? nav[0] : null) === undefined)) { missing.push(f.name); return; }
         const linky = item.some(x => LINKY.test(x.name)) && item.some(x => HREF.test(x.name));
         const src = linky && nav ? nav : Array.from({ length: 5 }, () => null), n = src.length;
         out[f.name] = src.map((nv, i) => { const o = {}; item.forEach(x => { const v = value(x, i, n, nv); if (v !== undefined && (!x.opt || HREF.test(x.name) || LINKY.test(x.name) || /angle|deg/i.test(x.name))) o[x.name] = v; }); return o; });

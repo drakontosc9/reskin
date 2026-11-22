@@ -203,8 +203,66 @@ function __rkElem(D) {
     if (PICK || WORDS || e.defaultPrevented) return;
     var a = e.target.closest && e.target.closest('a[href]'); if (!a) return;
     var h = a.getAttribute('href') || ''; e.preventDefault();
-    if (h && h.charAt(0) !== '#' && !/^javascript:/i.test(h)) parent.postMessage({ rkGo: a.href, newTab: a.target === '_blank' }, '*');
+    // a site link carried in ("/pricing", "#about") is relative to the site, not to this frame
+    if (h && h !== '#' && !/^javascript:/i.test(h)) parent.postMessage({ rkGo: /^[a-z][\w+.-]*:/i.test(h) ? a.href : h, newTab: a.target === '_blank' }, '*');
   });
+  // ---- a navigation bar standing in for the site's own: its menu gets the site's links, brand and call to action.
+  // The menu is the biggest group of same-shaped clickable items with words (icons stay); found once, re-found only
+  // if the component re-renders them away.
+  var NAV = D.nav || null;
+  function words(el) { return (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim(); }
+  function shown(el) { var r = el.getBoundingClientRect(), cs = getComputedStyle(el); return r.width > 2 && r.height > 2 && cs.visibility !== 'hidden' && cs.display !== 'none'; }
+  function navFill() {
+    if (!NAV || !document.body) return;
+    var marked = document.querySelectorAll('[data-rk-nav]');
+    if (marked.length && Array.prototype.every.call(marked, function (x) { return x.isConnected; })) return;
+    document.querySelectorAll('[data-rk-navclone]').forEach(function (x) { x.remove(); });
+    document.querySelectorAll('[data-rk-navhid]').forEach(function (x) { x.style.removeProperty('display'); x.removeAttribute('data-rk-navhid'); });
+    var CL = 'a,button,[role=menuitem],[role=tab],[role=link]';
+    var cand = Array.prototype.filter.call(document.body.querySelectorAll(CL), function (a) {
+      var t = words(a); return t && t.length <= 30 && shown(a) && !(a.parentElement && a.parentElement.closest(CL));
+    });
+    var look = function (a) { var s = getComputedStyle(a); return [a.tagName, s.display, s.fontSize, s.fontWeight, s.textTransform, s.paddingTop, s.paddingLeft].join('|'); }, groups = {};
+    cand.forEach(function (a) { (groups[look(a)] = groups[look(a)] || []).push(a); });
+    var menu = Object.keys(groups).map(function (k) { return groups[k]; }).sort(function (x, y) { return y.length - x.length; })[0] || [];
+    if (menu.length < 2) return;
+    var first = menu[0], last = menu[menu.length - 1];
+    var before = function (a, b) { return !!(a.compareDocumentPosition(b) & 4); };
+    // where each item sits: the ancestor that is a child of the menu's common parent (an <li>, a wrapper)
+    var common = first.parentElement; while (common && !common.contains(menu[1])) common = common.parentElement;
+    var slot = function (a) { var x = a; while (x.parentElement && x.parentElement !== common) x = x.parentElement; return x; };
+    var links = NAV.links || [];
+    if (links.length) {
+      menu.forEach(function (a, i) {
+        a.setAttribute('data-rk-nav', i);
+        if (i < links.length) { setTxt(a, links[i].text); if (a.tagName === 'A') a.setAttribute('href', links[i].href || '#'); }
+        else { var s = slot(a); s.style.setProperty('display', 'none', 'important'); s.setAttribute('data-rk-navhid', ''); }
+      });
+      var src = slot(last);
+      for (var k = menu.length; k < links.length; k++) {
+        var cl = src.cloneNode(true); cl.setAttribute('data-rk-navclone', ''); cl.removeAttribute('data-rk-nav');
+        cl.querySelectorAll('[data-rk-nav]').forEach(function (x) { x.removeAttribute('data-rk-nav'); });
+        src.parentNode.insertBefore(cl, src.nextSibling); src = cl;
+        var ca = cl.matches(CL) ? cl : cl.querySelector(CL) || cl;
+        setTxt(ca, links[k].text); if (ca.tagName === 'A') ca.setAttribute('href', links[k].href || '#');
+      }
+    } else first.setAttribute('data-rk-nav', 0);
+    // the call to action: a clickable that isn't part of the menu, after it
+    if (NAV.cta) {
+      var cta = cand.filter(function (a) { return menu.indexOf(a) < 0 && before(last, a); }).pop();
+      if (cta) { setTxt(cta, NAV.cta.text); if (cta.tagName === 'A') cta.setAttribute('href', NAV.cta.href || '#'); }
+    }
+    // the brand: a logo-ish element, else the first short words before the menu
+    if (NAV.brand) {
+      var b = document.querySelector('[class*="logo" i],[class*="brand" i]');
+      if (b && (menu.some(function (a) { return b.contains(a) || a.contains(b); }) || !words(b))) b = null;
+      if (!b) {
+        var all = document.body.getElementsByTagName('*');
+        for (var j = 0; j < all.length && all[j] !== first; j++) { var el = all[j]; if (/^(SCRIPT|STYLE)$/.test(el.tagName) || !ownText(el) || !shown(el)) continue; if (words(el).length <= 40 && !el.contains(first)) { b = el; break; } }
+      }
+      if (b && before(b, first)) setTxt(b, NAV.brand);
+    }
+  }
   var WORDS = false, wEl = null, wWas = '';
   var wst = document.createElement('style');
   wst.textContent = '[data-rk-w]{outline:2px dashed #2f6bff!important;outline-offset:2px;cursor:text!important}[contenteditable=true][data-rk-wed]{outline:2px solid #2f6bff!important;outline-offset:2px}';
@@ -215,8 +273,8 @@ function __rkElem(D) {
     var el = wEl; if (!el) return; wEl = null; el.contentEditable = 'false'; el.removeAttribute('data-rk-wed');
     var t = el.innerText.replace(/\s+/g, ' ').trim();
     if (!save || !t) { el.innerText = wWas; return; }
-    if (t !== wWas.trim()) {
-      var it = { path: pathOf(el), label: wWas.trim().slice(0, 40), text: t }, at = -1;
+    if (t !== wWas.replace(/\s+/g, ' ').trim()) {
+      var it = { path: pathOf(el), label: wWas.trim().slice(0, 40), text: t, was: wWas.replace(/\s+/g, ' ').trim() }, at = -1;
       INNER.forEach(function (x, i) { if (x.path === it.path) at = i; }); if (at >= 0) INNER[at].text = t; else INNER.push(it);
       parent.postMessage({ rkElWords: D.id, item: it }, '*');
     }
@@ -228,24 +286,44 @@ function __rkElem(D) {
     if (!WORDS) return; document.querySelectorAll('[data-rk-w]').forEach(function (x) { x.removeAttribute('data-rk-w'); });
     var el = wordsAt(e.target); if (el && el !== wEl) el.setAttribute('data-rk-w', '');
   }, true);
-  document.addEventListener('click', function (e) {
-    if (!WORDS) return; e.preventDefault(); e.stopPropagation();
-    var el = wordsAt(e.target); if (!el || el === wEl) return;
+  function wordsStart(el) {
     wordsDone(true); wEl = el; wWas = el.innerText; el.removeAttribute('data-rk-w'); el.setAttribute('data-rk-wed', '');
     el.contentEditable = 'true'; el.focus();
     var r = document.createRange(); r.selectNodeContents(el); var sl = getSelection(); sl.removeAllRanges(); sl.addRange(r);
+  }
+  document.addEventListener('click', function (e) {
+    if (!WORDS && !(wEl && wEl.contains(e.target))) return;
+    e.preventDefault(); e.stopPropagation(); if (!WORDS) return;   // clicking inside the words you're typing only moves the caret
+    var el = wordsAt(e.target); if (!el || el === wEl) return;
+    wordsStart(el);
   }, true);
+  // in the editor, double-click any words in the component to type over them, just like the page's own words
+  var tipEl = null;
+  if (D.edit) {
+    document.addEventListener('dblclick', function (e) {
+      if (PICK || WORDS) return; var el = wordsAt(e.target); if (!el || el === wEl) return;
+      e.preventDefault(); e.stopPropagation(); wordsStart(el);
+      if (tipEl) { tipEl = null; parent.postMessage({ rkElTip: D.id, on: false }, '*'); }
+    }, true);
+    document.addEventListener('focusout', function (e) { if (wEl && e.target === wEl && !WORDS) wordsDone(true); }, true);
+    document.addEventListener('mousemove', function (e) {
+      var w = PICK || WORDS || wEl ? null : wordsAt(e.target);
+      if (w || tipEl) parent.postMessage({ rkElTip: D.id, on: !!w, x: e.clientX, y: e.clientY }, '*');
+      tipEl = w;
+    }, true);
+    document.addEventListener('mouseout', function (e) { if (!e.relatedTarget && tipEl) { tipEl = null; parent.postMessage({ rkElTip: D.id, on: false }, '*'); } });
+  }
   document.addEventListener('keydown', function (e) {
-    if (!WORDS) return;
+    if (!WORDS && !wEl) return;
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); wordsDone(true); }
     if (e.key === 'Escape') { e.preventDefault(); if (wEl) wordsDone(false); else { wordsMode(false); parent.postMessage({ rkElWordsEnd: D.id }, '*'); } }
   }, true);
   addEventListener('message', function (e) { var d = e.data || {}; if ('rkWords' in d) wordsMode(!!d.rkWords); });
-  addEventListener('load', function () { label(); applyAllInner(); report(); });
+  addEventListener('load', function () { label(); navFill(); applyAllInner(); report(); });
   addEventListener('resize', function () { setTimeout(report, 60); });
   // frameworks may re-render after load: keep re-applying the edits for a while, then on every change
-  var n = 0, iv = setInterval(function () { if (n < 12) label(); applyAllInner(); report(); if (++n > 25) { clearInterval(iv); setInterval(report, 2000); } }, 350);
-  if (INNER.length) try { new MutationObserver(function () { clearTimeout(iv.t); iv.t = setTimeout(applyAllInner, 60); }).observe(document.documentElement, { subtree: true, childList: true }); } catch (e) {}
+  var n = 0, iv = setInterval(function () { if (n < 12) label(); navFill(); applyAllInner(); report(); if (++n > 25) { clearInterval(iv); setInterval(report, 2000); } }, 350);
+  if (INNER.length || NAV) try { new MutationObserver(function () { clearTimeout(iv.t); iv.t = setTimeout(function () { navFill(); applyAllInner(); }, 60); }).observe(document.documentElement, { subtree: true, childList: true }); } catch (e) {}
 }
 
 // the page runtime: applies edits (bento tiles, swapped buttons), runs click actions,
@@ -307,7 +385,9 @@ function __rkStudio(EDITS, MODE) {
   function goTo(el, where) { var r = el.getBoundingClientRect(); scrollTo({ top: Math.max(0, r.top + scrollY - (where === 'center' ? (innerHeight - r.height) / 2 : 0)), behavior: 'smooth' }); }
   var F = window.__rkFrames = {};   // frame state (handy when debugging a layout)
   var PAD = 14, CROP_W = 900, CROP_H = 360, CROP_MAXW = 560, CROP_MAXH = 240, WAIT = 9000;
+  var BAR_H = 600;   // a navigation bar's frame: tall enough to measure it; the tile shows just the bar
   function fit(k) {
+    if (k.bar) { var bw = k.tile.clientWidth; if (!bw) return; k.vw = Math.round(bw / k.s); k.vh = BAR_H; k.f.style.width = k.vw + 'px'; k.f.style.height = BAR_H + 'px'; k.f.style.transform = 'scale(' + k.s + ')'; return; }
     var tw = k.tile.clientWidth, th = k.tile.clientHeight; if (!tw || !th) return;
     k.vw = Math.round(tw / k.s); k.vh = Math.round(th / k.s);
     k.f.style.width = k.vw + 'px'; k.f.style.height = k.vh + 'px'; k.f.style.transform = 'scale(' + k.s + ')';
@@ -361,6 +441,17 @@ function __rkStudio(EDITS, MODE) {
       k.wrap.style.visibility = 'visible'; return;
     }
     if (!k.vw || Math.abs(d.vw - k.vw) > 3 || Math.abs(d.vh - k.vh) > 3) return;   // a report from before the last resize
+    if (k.bar) {   // in the navigation's place: as tall as the bar, centred, smaller only if it's wider than the page
+      if (!d.box) return;
+      var bw = k.tile.clientWidth;
+      if (k.adj < 3 && d.box.w * k.s > bw + 2) { k.adj++; k.s = Math.max(0.3, k.s * bw / (d.box.w * k.s)); fit(k); return; }
+      var wide = d.box.w * k.s >= bw * 0.9, pad = wide ? 0 : 14;   // room for its shadow
+      k.tile.style.height = Math.round(d.box.h * k.s + 2 * pad) + 'px';
+      k.f.style.left = (wide ? Math.round(-d.box.x * k.s) : Math.round((bw - d.box.w * k.s) / 2 - d.box.x * k.s)) + 'px';
+      k.f.style.top = Math.round(pad - d.box.y * k.s) + 'px';
+      k.tile.style.background = wide && d.bg ? d.bg : 'transparent';
+      return;
+    }
     // how much room the content needs: its scroll extent, or its own box (centred content can overflow upwards too)
     var needW = Math.max(d.sw, d.box ? d.box.w + 24 : 0), needH = Math.max(d.sh, d.box ? d.box.h + 24 : 0);
     if (d.box && !d.box.full) { needW = Math.max(needW, d.box.x + d.box.w + 12); needH = Math.max(needH, d.box.y + d.box.h + 12, d.box.y < 0 ? d.box.h - d.box.y + 24 : 0); }
@@ -452,7 +543,18 @@ function __rkStudio(EDITS, MODE) {
     } else if (e.doc) {
       var L = e.layout || { flow: true, size: 'auto' };
       var tile = document.createElement('div');
-      tile.className = 'rk-e rk-tile' + (L.center ? ' rk-center' : ''); tile.setAttribute('data-rk-edit', e.id);
+      tile.className = 'rk-e rk-tile' + (L.center ? ' rk-center' : '') + (L.bar ? ' rk-navbar' : ''); tile.setAttribute('data-rk-edit', e.id);
+      if (L.bar) {
+        // the site's navigation, replaced: the bar takes its place (and stays at the top if the old one did)
+        var nr = el.getBoundingClientRect(), pos = getComputedStyle(el).position;
+        var side = el.matches('aside.side') && el.parentElement.classList.contains('shell');   // a sidebar layout: the bar goes on top
+        tile.style.cssText = 'width:100%;height:' + Math.max(48, Math.round(side ? 64 : nr.height)) + 'px' + (side || pos === 'sticky' || pos === 'fixed' ? ';position:sticky;top:0' : '');
+        if (side) { el.parentElement.style.gridTemplateColumns = 'minmax(0,1fr)'; el.parentElement.parentNode.insertBefore(tile, el.parentElement); }
+        else el.parentNode.insertBefore(tile, el);
+        el.style.display = 'none';
+        tileFrame(e.id, e.doc, tile, false).bar = true;
+        return;
+      }
       if (L.flow) {
         setSize(tile, L.size === 'auto' ? (L.row ? 'full' : 'big') : L.size);
         var spot = bentoSpot(el, e);
@@ -494,7 +596,17 @@ function __rkStudio(EDITS, MODE) {
   addEventListener('message', function (ev) {
     var d = ev.data || {};
     if (d.rkE) onReport(d);
-    if (d.rkGo && MODE !== 'edit' && MODE !== 'show') { if (d.newTab || MODE === 'try') window.open(d.rkGo, '_blank', 'noopener'); else location.href = d.rkGo; }
+    if (d.rkGo && MODE !== 'edit' && MODE !== 'show') {
+      if (d.rkGo.charAt(0) === '#') { var to = d.rkGo.length > 1 && document.getElementById(d.rkGo.slice(1)); if (to) goTo(to); }
+      else if (d.newTab || MODE === 'try') window.open(d.rkGo, '_blank', 'noopener'); else location.href = d.rkGo;
+    }
+    if (d.rkElTip && MODE === 'edit' && F[d.rkElTip]) {   // words inside a component: the same hint as the page's own words
+      var tt = document.querySelector('.rk-tag'); if (!tt) return;
+      if (!d.on) { tt.style.display = 'none'; return; }
+      var fr = F[d.rkElTip].f.getBoundingClientRect(), fs = fr.width / (F[d.rkElTip].f.offsetWidth || fr.width), tx = fr.left + d.x * fs, ty = fr.top + d.y * fs;
+      tt.textContent = 'Double-click to edit the words'; tt.style.display = 'block';
+      tt.style.left = Math.min(tx + 14, innerWidth - tt.offsetWidth - 8) + 'px'; tt.style.top = Math.max(ty - 30, 6) + 'px';
+    }
     if (d.rkElCtx || d.rkElWords || d.rkElWordsEnd) {
       var id = d.rkElCtx || d.rkElWords || d.rkElWordsEnd, k = F[id]; if (!k) return;
       if (d.rkElWords) return parent.postMessage({ rkInnerWords: { editId: id, item: d.item } }, '*');
@@ -520,6 +632,7 @@ function __rkStudio(EDITS, MODE) {
     '.rk-bento>*{min-width:0!important;margin:0!important;grid-column:span 1}.rk-bento-row>.rk-bento{margin:28px 0}' +
     '.rk-tile{position:relative;overflow:hidden;border-radius:var(--r,14px);min-height:150px}' +
     '.rk-wording{outline:3px solid #2f6bff!important;outline-offset:4px}' +
+    '.rk-tile.rk-navbar{min-height:0;border-radius:0;z-index:40}' +
     '.rk-empty{position:absolute;inset:10px;display:grid;place-items:center;text-align:center;padding:14px;border:2px dashed #c9c2b8;border-radius:12px;background:rgba(250,248,245,.94);color:#57524b;font:500 13px/1.45 Inter,system-ui,sans-serif}' +
     '.rk-bento>.rk-c1{grid-column:span 1}.rk-bento>.rk-c2{grid-column:span 2}.rk-bento>.rk-c4{grid-column:1/-1}' +
     '.rk-bento>.rk-tile.rk-center{grid-column:1/-1;justify-self:center;width:calc(var(--rkc,2) * (100% - 60px) / 4 + (var(--rkc,2) - 1) * 20px)}' +
@@ -566,6 +679,7 @@ function __rkStudio(EDITS, MODE) {
   function plain(t) { return t ? { addr: t.addr || null, info: t.info || null, editId: t.editId || null } : null; }
   function blocksOnPage() { return Array.prototype.filter.call(document.querySelectorAll('.rk-block'), function (b) { return b.offsetHeight > 0; }); }
   var clicky = function (k) { return k === 'button' || k === 'link'; };
+  var NAVISH = false;   // the app says whether what's being carried is a navigation bar
   function intentAt(x, y, node) {
     var bs = blocksOnPage(), EDGE = 30;
     for (var i = 0; i < bs.length; i++) {
@@ -575,8 +689,13 @@ function __rkStudio(EDITS, MODE) {
       if (r.bottom - y < EDGE) return { kind: 'gap', scope: bs[i].getAttribute('data-block'), y: r.bottom, x0: r.left, x1: r.right };
       break;
     }
-    var t = targetOf(node); if (!t) return null;
-    if (t.editId) return { kind: 'swap', editId: t.editId, el: t.el, label: 'Swap this component' };
+    var t = targetOf(node);
+    if (t && t.editId) return { kind: 'swap', editId: t.editId, el: t.el, label: 'Swap this component' };
+    // the site's navigation: a navigation component takes its place (with the site's links); anything else dropped on
+    // one of its links replaces just that link, and on the bar itself replaces the bar
+    var nav = node && node.closest && node.closest('header.nav,aside.side');
+    if (nav && (NAVISH || !t || !clicky(t.addr.kind))) return { kind: 'nav', el: nav, label: 'Replace your navigation — keeps your links' };
+    if (!t) return null;
     var k = t.addr.kind;
     if (clicky(k)) return { kind: 'replace', addr: t.addr, info: t.info, el: t.el, label: 'Replace “' + (t.info.label || 'button').slice(0, 28) + '”' };
     if (k === 'section') {
@@ -629,8 +748,8 @@ function __rkStudio(EDITS, MODE) {
   function showBar(bx) {
     if (barFor && barFor.el === bx.el) return;
     hideBar(); barFor = bx; bx.el.classList.add('rk-hl');
-    var tile = bx.editId && bx.el.classList.contains('rk-tile');
-    bar.innerHTML = (tile ? '<button data-a="size" title="Change its size">⤢ Size</button>' : '') + (bx.editId ? '<button data-a="place" title="Centre it, or make it its own section">⊞ Place</button>' : '') + '<button data-a="swap" title="Drag another component onto it, or pick one">⇄ Swap</button><button data-a="remove" title="Take it off the page">✕ Remove</button>';
+    var tile = bx.editId && bx.el.classList.contains('rk-tile') && !bx.el.classList.contains('rk-navbar');
+    bar.innerHTML = (tile ? '<button data-a="size" title="Change its size">⤢ Size</button>' : '') + (bx.editId && !bx.el.classList.contains('rk-navbar') ? '<button data-a="place" title="Centre it, or make it its own section">⊞ Place</button>' : '') + '<button data-a="swap" title="Drag another component onto it, or pick one">⇄ Swap</button><button data-a="remove" title="Take it off the page">✕ Remove</button>';
     var r = bx.el.getBoundingClientRect();
     bar.style.display = 'flex'; bar.style.left = Math.max(6, Math.min(r.right - bar.offsetWidth - 6, innerWidth - bar.offsetWidth - 6)) + 'px'; bar.style.top = Math.max(6, r.top + 8) + 'px';
   }
@@ -695,6 +814,7 @@ function __rkStudio(EDITS, MODE) {
   addEventListener('message', function (ev) {
     var d = ev.data || {};
     if ('rkDragging' in d) dragging(d.rkDragging);
+    if ('rkNavish' in d) NAVISH = !!d.rkNavish;
     // carried in from the Library: the app sends where the pointer is; show where it would land, and drop it there
     if ('rkCarry' in d) {
       if (!d.rkCarry) { dragging(false); return; }
@@ -718,13 +838,68 @@ function __rkStudio(EDITS, MODE) {
 }
 /* ------------------------------------------------------------------ building the edits into the page */
 // mode: 'crop' (a button: shown at its real size) or 'fit' (a tile or popup: scaled to fit)
-function elemDoc(c, e, mode, act) {
+function elemDoc(c, e, mode, act, edit) {
   const html = compBlockDoc(c, { fill: 'own', recolor: !!e.recolor, props: e.props });
   const css = mode === 'crop'
     ? '<style>html{overflow:hidden!important}html,body{background:transparent!important}</style>'
     : '<style>html{overflow:hidden!important}</style>';
   const links = (e.links || []).map(l => ({ path: l.path, label: l.label }));
-  return injectEnd(html, css + `<script>(${__rkElem})(${jsonForScript({ id: e.id, text: e.text || null, mode, act: !!act, links, inner: e.inner || [] })});<\/script>`);
+  return injectEnd(html, css + `<script>(${__rkElem})(${jsonForScript({ id: e.id, text: e.text || null, mode, act: !!act, links, inner: e.inner || [], nav: e.navFill ? navFillFor(c, e) : null, edit: !!edit })});<\/script>`);
+}
+/* ---- a navigation bar from the Library standing in for the site's own ----
+   Navish by structure only: a <nav> / role=navigation in it, or a setting that is a list of links. */
+const LINK_LABEL = /^(label|title|name|text)$/i, LINK_HREF = /^(href|url|link|to|path)$/i;
+function typeKeys(code, name) {   // the fields of `interface Name { … }` / `type Name = { … }`
+  const m = new RegExp(`(?:interface\\s+${name}\\b[^{]*|type\\s+${name}\\s*=\\s*)\\{`).exec(code); if (!m) return null;
+  const open = m.index + m[0].length - 1, close = matchBrace(code, open); if (close < 0) return null;
+  const txt = code.slice(open + 1, close).replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  return splitTop(txt.replace(/;/g, ',').replace(/\n/g, ',')).map(p => /^\s*(?:readonly\s+)?([A-Za-z_$][\w$]*)(\?)?\s*:\s*([\s\S]+)$/.exec(p)).filter(Boolean).map(x => ({ name: x[1], opt: !!x[2], type: x[3].trim() }));
+}
+// the setting that takes a list of links, if it's one Reskin can fill on its own (label + address, plain words)
+function linkListProp(c) {
+  const P = parseProps(c); if (!P) return null;
+  const code = splitBundle(c.code).js, TY = (P.samples && P.samples.types) || {};
+  for (const f of P.fields) {
+    const arr = /^(?:readonly\s+)?([A-Z]\w*)\[\]$|^Array<([A-Z]\w*)>$/.exec(TY[f.name] || ''); if (!arr) continue;
+    const keys = typeKeys(code, arr[1] || arr[2]); if (!keys) continue;
+    const lab = keys.find(k => LINK_LABEL.test(k.name)), href = keys.find(k => LINK_HREF.test(k.name)); if (!lab || !href) continue;
+    const fillable = keys.every(k => k.opt || k === lab || k === href || /^(string|number|boolean)\b/.test(k.type));
+    return { name: f.name, lab: lab.name, href: href.name, keys, fillable };
+  }
+  return null;
+}
+function isNavish(c) {
+  if (!c) return false;
+  if (/<nav\b|role=["'{]*navigation/i.test(c.code)) return true;
+  return !!linkListProp(c);
+}
+// a navigation component's settings, filled from the site: its list of links, and its brand / call to action if it names them
+function navPropsFor(c) {
+  const m = state.model, out = {}, done = { links: false, brand: false, cta: false };
+  const P = parseProps(c); if (!P || !m) return { props: out, done };
+  const L = linkListProp(c);
+  if (L && L.fillable && m.nav.length) {
+    out[L.name] = m.nav.slice(0, 8).map((n, i) => {
+      const o = { [L.lab]: n.text, [L.href]: n.href || '#' };
+      L.keys.forEach(k => { if (k.opt || k.name in o) return; o[k.name] = /^number/.test(k.type) ? i : /^boolean/.test(k.type) ? i === 0 && /active|current|selected/i.test(k.name) : /^(id|key|value|slug)$/i.test(k.name) ? n.text.toLowerCase().replace(/\W+/g, '-') : n.text; });
+      return o;
+    });
+    done.links = true;
+  }
+  const TY = (P.samples && P.samples.types) || {};
+  P.fields.forEach(f => {
+    if (f.type !== 'text' || (TY[f.name] && !/^string\b/.test(TY[f.name]))) return;
+    if (m.brand && /^(brand|brandName|logoText|siteName|siteTitle|company|companyName)$/i.test(f.name)) { out[f.name] = m.brand; done.brand = true; }
+    if (m.navCta && /^(cta|ctaText|ctaLabel|buttonText|buttonLabel|actionText|actionLabel)$/i.test(f.name)) { out[f.name] = m.navCta.text; done.cta = true; }
+    if (m.navCta && /^(ctaHref|ctaUrl|ctaLink|buttonHref|buttonUrl|buttonLink|actionHref|actionUrl)$/i.test(f.name)) out[f.name] = m.navCta.href || '#';
+  });
+  return { props: out, done };
+}
+// what the frame fills in itself, for whatever the settings didn't cover
+function navFillFor(c, e) {
+  const m = state.model; if (!m) return null;
+  const d = e.navFill || {};
+  return { links: d.links ? [] : m.nav.slice(0, 8), brand: d.brand ? null : m.brand || null, cta: d.cta ? null : m.navCta || null };
 }
 // called by composeDoc (builder.js); mode: edit (Studio editor) · show (Build tab) · try (previews) · live (downloaded site)
 function studioScript(p, mode) {
@@ -735,7 +910,7 @@ function studioScript(p, mode) {
     return {
       id: e.id, target: e.target, mode: e.mode, inline, action: e.action || null, layout: e.layout || { flow: true, size: 'auto' }, text: e.mode === 'text' ? e.text : undefined, style: e.mode === 'style' ? e.style : undefined,
       links: (e.links || []).map((l, i) => { const lc = l.action && l.action.type === 'popup' && compById(l.action.compId); return { action: l.action, popDoc: lc ? elemDoc(lc, { id: 'pop-' + e.id + '-' + i, recolor: e.recolor }, 'fit', false) : null }; }),
-      doc: c && e.mode !== 'action' ? elemDoc(c, { ...e, text: inline ? e.text : null }, inline ? 'crop' : 'fit', !!e.action) : null,
+      doc: c && e.mode !== 'action' ? elemDoc(c, { ...e, text: inline ? e.text : null }, inline ? 'crop' : 'fit', !!e.action, mode === 'edit') : null,
       popDoc: pc ? elemDoc(pc, { id: 'pop-' + e.id, recolor: e.recolor }, 'fit', false) : null,
     };
   });
@@ -925,8 +1100,8 @@ function renderEditorWs() {
     const th = el.querySelector('.th');
     if (c.icon) th.innerHTML = `<img alt="" src="data:image/svg+xml;charset=utf-8,${encodeURIComponent(c.svg)}" style="width:44px;height:44px;margin:auto;display:block;position:relative;top:50%;transform:translateY(-50%)">`;
     else { const f = document.createElement('iframe'); f.setAttribute('sandbox', 'allow-scripts'); f.setAttribute('tabindex', '-1'); f.setAttribute('loading', 'lazy'); f.srcdoc = compThumbDoc(c); th.appendChild(f); const fit = () => { if (th.clientWidth) f.style.transform = `scale(${th.clientWidth / 600})`; }; fit(); new ResizeObserver(fit).observe(th); }
-    el.addEventListener('dragstart', e => { S.drag = c.id; e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData('text/plain', 'reskin-component:' + c.id); el.classList.add('drag'); $('stFrame').classList.add('dropping'); stPost({ rkDragging: true }); });
-    el.addEventListener('dragend', () => { el.classList.remove('drag'); const fr = $('stFrame'); if (fr) fr.classList.remove('dropping'); stPost({ rkDragging: false }); setTimeout(() => { S.drag = null; }, 400); });
+    el.addEventListener('dragstart', e => { S.drag = c.id; e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData('text/plain', 'reskin-component:' + c.id); el.classList.add('drag'); $('stFrame').classList.add('dropping'); stPost({ rkNavish: isNavish(c) }); stPost({ rkDragging: true }); });
+    el.addEventListener('dragend', () => { el.classList.remove('drag'); const fr = $('stFrame'); if (fr) fr.classList.remove('dropping'); stPost({ rkDragging: false }); setTimeout(() => { S.drag = null; stPost({ rkNavish: false }); }, 400); });
     el.onclick = () => {
       if (S.swapFor) { const w = S.swapFor; S.swapFor = null; return placeComp(c.id, w.editId ? { kind: 'swap', editId: w.editId } : { kind: 'swapblock', scope: w.blockId }); }
       toast('Drag it onto your page');
@@ -990,6 +1165,7 @@ function placeComp(compId, it) {
   if (it.kind === 'swap') {
     const e = editById(it.editId); if (!e) return;
     e.compId = c.id; delete e.inner; delete e.props; delete e.links; msg = `Swapped in “${c.name}”`;
+    if (e.layout && e.layout.bar) { const np = navPropsFor(c); e.navFill = np.done; if (Object.keys(np.props).length) e.props = np.props; }
   } else if (it.kind === 'swapblock') {
     const b = blockById(it.scope); if (!b) return;
     b.compId = c.id; b.label = c.name; delete b.inner; delete b.props; msg = `Swapped in “${c.name}”`;
@@ -1004,10 +1180,16 @@ function placeComp(compId, it) {
   } else if (it.kind === 'gap') {
     edits.push({ id: newEditId(), target: { scope: it.scope, kind: 'section', idx: 0 }, targetLabel: blockLabel(it.scope), mode: 'after', compId: c.id, recolor, layout: { flow: true, size: 'auto' } });
     edits[edits.length - 1].layout.row = true; msg = `Added “${c.name}” as a new section`;
+  } else if (it.kind === 'nav') {
+    // your navigation, replaced: the bar shows your links, brand and call to action; Undo or Remove gives yours back
+    const np = navPropsFor(c);
+    edits.push({ id: newEditId(), target: { scope: 'nav', kind: 'section', idx: 0 }, targetLabel: 'your navigation', mode: 'replace', compId: c.id, recolor,
+      layout: { bar: true }, navFill: np.done, ...(Object.keys(np.props).length ? { props: np.props } : {}) });
+    msg = `“${c.name}” is your navigation now — with your links`;
   } else return;
   saveProject(); renderEditorWs();
   // right after a drop: where it should sit, without hunting for a menu
-  const placed = it.kind === 'swap' || it.kind === 'swapblock' ? null : edits[edits.length - 1];
+  const placed = it.kind === 'swap' || it.kind === 'swapblock' || it.kind === 'nav' ? null : edits[edits.length - 1];
   const more = placed ? placeItems(placed).map(x => ({ ...x, short: /^Center/.test(x.label) ? 'Center' : /section/.test(x.label) ? 'Own section' : x.label })) : [];
   toastUndo(msg, snap, more);
   if (!c.tokens) ensureCompTokens(c);   // read its colours for next time (brand-colour matching)
@@ -1059,6 +1241,7 @@ function startCarry(c, x, y) {
   carryListen();
 }
 function carryListen() {
+  stPost({ rkNavish: isNavish(compById(CARRY.id)) });
   addEventListener('blur', carryCancel); addEventListener('pointercancel', carryCancel, true);
   addEventListener('pointermove', carryMove, true); addEventListener('pointerup', carryUp, true);
   addEventListener('wheel', carryWheel, { capture: true, passive: false }); addEventListener('keydown', carryKey, true);
@@ -1094,8 +1277,8 @@ function endCarry() {
   removeEventListener('blur', carryCancel); removeEventListener('pointercancel', carryCancel, true);
   clearInterval(CARRY.iv); CARRY.scroll = 0;
   if (CARRY.ghost) CARRY.ghost.remove(); if (CARRY.hint) CARRY.hint.remove();
-  document.body.classList.remove('carrying');
-  CARRY.id = CARRY.ghost = CARRY.hint = CARRY.at = CARRY.drop = null; CARRY.ready = false;
+  document.body.classList.remove('carrying'); stPost({ rkNavish: false });
+  CARRY.id =CARRY.ghost = CARRY.hint = CARRY.at = CARRY.drop = null; CARRY.ready = false;
 }
 // press and hold (or press and move) on a card to pick it up; a plain click still opens it
 function makeCarryable(el, c, onClick) {
@@ -1128,8 +1311,9 @@ addEventListener('message', e => {
   const d = e.data || {};
   if (state.view !== 'studio' || !$('stFrame')) return;
   const f = $('stFrame').querySelector('iframe'); if (!f || e.source !== f.contentWindow) return;
+  if (d.rkReady && S.reveal) { stPost({ rkHi: { editId: S.reveal }, scroll: true }); S.reveal = null; }
   if (d.rkReady) {   // a fresh stage (after a tab switch or a re-render): pick up where the carry is
-    if (CARRY.id) { CARRY.ready = true; if (CARRY.drop) stPost({ rkCarryDrop: CARRY.drop }); else if (CARRY.at) stPost({ rkCarry: CARRY.at }); }
+    if (CARRY.id) { CARRY.ready = true; stPost({ rkNavish: isNavish(compById(CARRY.id)) }); if (CARRY.drop) stPost({ rkCarryDrop: CARRY.drop }); else if (CARRY.at) stPost({ rkCarry: CARRY.at }); }
     return;
   }
   if ('rkDrop' in d) {
@@ -1159,9 +1343,9 @@ addEventListener('message', e => {
   }
   if (d.rkInnerWords) {
     const e = editById(d.rkInnerWords.editId), it = d.rkInnerWords.item; if (!e || !it) return;
-    const inner = e.inner || (e.inner = []), ex = inner.find(x => x.path === it.path);
-    if (ex) ex.text = it.text; else inner.push({ path: it.path, label: it.label, text: it.text });
-    saveProject(); toast(`Changed to “${it.text.slice(0, 40)}” · click more words, or Esc when done`); return;
+    const snap = snapshotPage(), c = compById(e.compId), how = innerWords(e, c, it);
+    saveProject(); if (how !== 'inner') { S.reveal = e.id; renderStudioPreview(); }   // shown again with the new setting, where you were
+    toastUndo(`Changed to “${it.text.slice(0, 40)}”`, snap); return;
   }
   if (d.rkText) { saveTextEdit(d.rkText.addr, d.rkText.text, d.rkText.was); return; }
   if (d.rkCtx) {
@@ -1184,6 +1368,31 @@ function removeBlock(id) {
   saveProject(); toast(`Removed “${b.label}”${b.replaces ? ' — your own section is back' : ''}`); renderStudio();
 }
 const toHex = c => { try { return rgbToHex(cssToRgb(c)); } catch { return '#000000'; } };
+
+// words typed inside a placed component go where they'll last: the button's own words; else the one setting that
+// held exactly those words (a title, a link in its list); else this placement's override for that spot
+function innerWords(e, c, it) {
+  if (isClicky(e.target.kind) && it.was && it.was === (e.text || '').trim()) { e.text = it.text; return 'text'; }
+  const P = c && c.kind === 'tsx' && it.was ? parseProps(c) : null;
+  if (P) {
+    // what it shows with: its own defaults, then what's set (by its demo, the Library, this placement)
+    const M = mountFor(c, e.props), all = {}, hits = [];
+    P.fields.forEach(f => { if (f.def !== undefined) all[f.name] = f.def; });
+    Object.assign(all, M ? M.props : {});
+    const walk = (v, path) => { if (typeof v === 'string') { if (v.replace(/\s+/g, ' ').trim() === it.was) hits.push(path); } else if (v && typeof v === 'object') Object.keys(v).forEach(k => walk(v[k], path.concat(k))); };
+    Object.keys(all).forEach(k => walk(all[k], [k]));
+    if (hits.length === 1) {
+      const top = hits[0][0], props = { ...(e.props || {}) };
+      props[top] = hits[0].length === 1 ? it.text : JSON.parse(JSON.stringify(all[top]));
+      if (hits[0].length > 1) { let o = props[top]; hits[0].slice(1, -1).forEach(k => { o = o[k]; }); o[hits[0][hits[0].length - 1]] = it.text; }
+      // only if it will really be shown with that setting (not left to its own demo)
+      if (mountFor(c, props)) { e.props = props; return 'props'; }
+    }
+  }
+  const inner = e.inner || (e.inner = []), ex = inner.find(x => x.path === it.path);
+  if (ex) ex.text = it.text; else inner.push({ path: it.path, label: it.label, text: it.text });
+  return 'inner';
+}
 
 /* ---- right-click menu ---- */
 function saveTextEdit(addr, text, was) {
@@ -1223,7 +1432,7 @@ function linkTargets(e, part) {
 // Where a placed component sits: centred in its row, or a full-width section of its own. One list, shown after a drop,
 // in the hover toolbar's Place button and in the right-click menu.
 function placeItems(e) {
-  if (!e || !compById(e.compId)) return [];
+  if (!e || !compById(e.compId) || (e.layout && e.layout.bar)) return [];   // a navigation bar sits where your navigation was
   const L = e.layout || { flow: true, size: 'auto' }, own = !!L.row && e.target.kind === 'section', out = [];
   // in a button's place it already sits where the button was: nothing to centre
   if (!isClicky(e.target.kind)) out.push({ label: L.center ? 'Back to the side' : 'Center it', icon: '↔', run: () => placeSet(e, 'center') });
