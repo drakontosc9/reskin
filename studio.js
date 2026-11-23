@@ -1208,7 +1208,7 @@ async function importDropped(files, text) {
     if (!items.length && text && !/^reskin-component:/.test(text)) {
       const first = text.split(/\s+/)[0];
       if (/^https?:\/\//.test(first) || /^(www\.)?(uiverse\.io|21st\.dev|mui\.com|reactbits\.dev)\//.test(first)) { toast('Fetching the component…', 2500); items.push(...await importByLink(first)); }
-      else if (/[<{]|^\s*(import|export|const|function)\b/.test(text)) { const kind = detectKind(text); items.push({ name: titleCase(((/(?:function|const)\s+([A-Z]\w*)/.exec(text) || [])[1] || 'Pasted component').replace(/([a-z])([A-Z])/g, '$1 $2')), source: 'pasted', kind, code: text }); }
+      else if (/[<{]|^\s*(import|export|const|function)\b/.test(text)) { const kind = detectKind(text); items.push({ name: guessCompName(text, kind), source: 'pasted', kind, code: text }); }
     }
     if (!items.length) { if (text || (files && files.length)) toast('That isn’t a component Reskin can use — try a link, code, an .html/.tsx file or a picture', 4500); return null; }
     await readyComps(items);

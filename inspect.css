@@ -28,4 +28,4 @@
 .ins-hist .ghost[disabled]{opacity:.4;cursor:default}
 .cv-remove:hover,.cv-remove:focus-visible{color:#b2341a;border-color:#b2341a}
 #cvInspect.on{background:var(--ink);color:#fff;border-color:var(--ink)}
-@media (max-width:900px){.cv-main .bx-frame.ins-on{grid-template-columns:1fr;grid-template-rows:420px auto;height:auto}.ins-panel{border-left:0;border-top:1px solid #2a2826}}
+@media (max-width:900px){.cv-main .bx-frame.ins-on{grid-template-columns:minmax(0,1fr);grid-template-rows:420px auto;height:auto}.ins-panel{border-left:0;border-top:1px solid #2a2826}}

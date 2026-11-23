@@ -102,11 +102,12 @@ function renderTargetCard() {
   }
   const status = t.error ? `<div class="warn err">${esc(t.error)}</div>` : '';
   const miss = t.missing && t.missing.length ? `<div class="warn">${missingNote(t.missing)}</div>` : '';
+  const from = t.guessed && !(t.missing && t.missing.length) ? `<div class="warn">Its CSS and images load from <b>${esc(t.guessed)}</b>, the address the page gives for itself. If it looks wrong, drop the page together with its folder.</div>` : '';
   const sizeKb = Math.round(t.text.length / 1024);
   const sw = t.tokens ? `<div class="sw">${swatches(t.tokens)}</div>` : '';
   body.innerHTML = `<div class="filechip"><span class="kind dark">${t.kind === 'tsx' ? 'tsx' : (t.name.split('.').pop() || 'html').slice(0, 4)}</span>
     <div class="nm"><b>${esc(t.name)}</b><span>${sizeKb} KB${t.assets.size ? ` · ${t.assets.size} linked files` : ''}${t.tokens ? ' · design sampled ✓' : ' · will be sampled when you generate'}</span></div>${sw}</div>
-    ${status}${miss}<div class="tprev" id="tPrev">${t.viewHtml ? '' : '<div class="ph">Preview appears after sampling</div>'}</div>`;
+    ${status}${miss}${from}<div class="tprev" id="tPrev">${t.viewHtml ? '' : '<div class="ph">Preview appears after sampling</div>'}</div>`;
   if (t.viewHtml) mountScaled($('tPrev'), t.viewHtml);
 }
 function swatches(T) {
@@ -167,7 +168,7 @@ async function loadTarget() {
   t.pasting = false; t.error = null;
   let viewHtml, liveHtml;
   if (t.kind === 'tsx') viewHtml = tsxDoc(t.text, 'view');
-  else { const prep = await prepareHtml(t.text, t.assets); t.missing = prep.missing; viewHtml = prep.html; liveHtml = prep.liveHtml; }
+  else { const prep = await prepareHtml(t.text, t.assets); t.missing = prep.missing; t.guessed = prep.guessed; viewHtml = prep.html; liveHtml = prep.liveHtml; }
   try {
     const res = await runSandbox(id => t.kind === 'tsx' ? tsxDoc(t.text, id) : withProbe(viewHtml, id));
     t.tokens = { ...res.tokens, name: t.name };
@@ -542,6 +543,24 @@ async function siteText(url) {
   return t;
 }
 const titleCase = s => s.replace(/[-_]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).trim();
+// A pasted component's name, from what it is: its component name (React), else what it's called in its markup
+// (the first element's class: "card", "pricing-table") and its first heading or button ("Card · Start your capstone")
+function guessCompName(code, kind) {
+  const fn = (/(?:export\s+default\s+function|function|const)\s+([A-Z]\w*)/.exec(code) || [])[1];
+  if (kind === 'tsx' || fn) return fn ? titleCase(fn.replace(/([a-z])([A-Z])/g, '$1 $2')) : 'Pasted component';
+  try {
+    const body = new DOMParser().parseFromString(code, 'text/html').body;
+    const GENERIC = /^(container|wrapper|wrap|root|app|main|inner|outer|content|box|holder|layout|flex|grid|row|col|d-flex|w-full|relative)$/i;
+    let role = '';
+    for (const el of body.querySelectorAll('*')) {
+      const cls = [...el.classList].find(c => /^[a-z][a-z-]{2,24}$/i.test(c) && !GENERIC.test(c) && !/^(p|m|px|py|mx|my|text|bg|flex|grid|gap|w|h|rounded|shadow|border|font|items|justify)-/.test(c));
+      if (cls) { role = titleCase(cls); break; }
+    }
+    const label = [...body.querySelectorAll('h1,h2,h3,h4,button,a,label')].map(e => e.textContent.trim().replace(/\s+/g, ' ')).find(t => t && t.length <= 32) || '';
+    const name = role && label ? `${role} · ${label}` : role || label;
+    return name ? name.slice(0, 48) : 'Pasted component';
+  } catch { return 'Pasted component'; }
+}
 const uiverseDoc = (html, css) => `<!doctype html><html><head><meta charset="utf-8"><style>${css.replace(/<\/style/gi, '')}</style><style>body{margin:0;min-height:100vh;display:grid;place-items:center;font-family:system-ui,sans-serif}</style></head><body>${html}</body></html>`;
 
 async function importByLink(raw) {
@@ -776,9 +795,9 @@ function renderComps() {
   $('cPasteBtn').onclick = () => { comps.pasting = !comps.pasting; renderComps(); if (comps.pasting) $('cCode').focus(); };
   if (comps.pasting) $('cSavePaste').onclick = () => {
     const code = $('cCode').value.trim(); if (!code) return;
-    const kind = detectKind(code), name = $('cName').value.trim() || (/(?:function|const)\s+([A-Z]\w*)/.exec(code) || [])[1] || 'Pasted component';
+    const kind = detectKind(code), name = $('cName').value.trim() || guessCompName(code, kind);
     comps.pasting = false;
-    addComps([{ name: titleCase(name.replace(/([a-z])([A-Z])/g, '$1 $2')), source: 'pasted', kind, code: kind === 'html' && !/<html|<body/i.test(code) ? uiverseDoc(code.replace(/<style[\s\S]*?<\/style>/gi, ''), [...code.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/gi)].map(m => m[1]).join('\n')) : code }]);
+    addComps([{ name, source: 'pasted', kind, code: kind === 'html' && !/<html|<body/i.test(code) ? uiverseDoc(code.replace(/<style[\s\S]*?<\/style>/gi, ''), [...code.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/gi)].map(m => m[1]).join('\n')) : code }]);
   };
   $('cFileBtn').onclick = () => { const i = document.createElement('input'); i.type = 'file'; i.multiple = true; i.accept = '.html,.htm,.tsx,.jsx'; i.onchange = () => addCompFiles([...i.files]); i.click(); };
   box.querySelectorAll('[data-coll]').forEach(b => b.onclick = () => { comps.filter = b.dataset.coll; renderComps(); });

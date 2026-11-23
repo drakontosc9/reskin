@@ -177,7 +177,7 @@ const CATS = [
   ['text', 'Text Effects', 'Aa', /(text|typewriter|heading|letter|glitch|word)/, null],
   ['other', 'Other', '…', null, null],
 ];
-const CAT_V = 4;   // bump when the rules change, so saved components get sorted again
+const CAT_V = 5;   // bump when the rules change, so saved components get sorted again
 const catName = k => (CATS.find(x => x[0] === k) || CATS[CATS.length - 1])[1];
 function compCat(c) {
   if (c.catV === CAT_V && c.cat) return c.cat;
@@ -197,7 +197,8 @@ function sortComp(c) {
   if (first === 'button' || (first === 'a' && body.length < 1500)) return 'buttons';
   if (first === 'svg' && body.length < 4000) return 'icons';
   if (first === 'input') return /checkbox|radio/.test(body) ? 'toggles' : 'forms';
-  if (/^h[1-3]$/.test(first) && body.length < 6000) return 'text';
+  // a heading with a button, link or picture under it is a card; a heading on its own is a text effect
+  if (/^h[1-3]$/.test(first) && body.length < 6000) return /<(button|a|img)\b/.test(body) ? 'cards' : 'text';
   // otherwise: the category whose words show up most in its code (at least a few times)
   let best = 'other', top = 2;
   for (const k of CATS) { if (!k[3]) continue; const n = (body.match(new RegExp(k[3].source, 'g')) || []).length; if (n > top) { top = n; best = k[0]; } }   // in its markup, not its CSS
@@ -264,7 +265,7 @@ const designTokens = s => s && s.arch === 'target' && state.tgt && state.tgt.tok
 let worn = null;
 function wearStyle(s) {
   const r = document.documentElement.style, body = document.body;
-  const keys = ['--bg', '--panel', '--ink', '--muted', '--line', '--accent', '--accent-ink', '--chip', '--accent-soft', '--font-b', '--font-d',
+  const keys = ['--bg', '--panel', '--ink', '--muted', '--line', '--accent', '--accent-ink', '--chip', '--accent-soft', '--field', '--well', '--stage', 'color-scheme', '--font-b', '--font-d',
     '--btn-r', '--btn-shadow', '--btn-w', '--btn-tt', '--btn-ls', '--btn-bw', '--app-r', '--head-w', '--head-ls', '--head-tt', '--ease', '--dur'];
   const clear = () => { keys.forEach(k => r.removeProperty(k)); body.classList.remove('wearing', 'mo-lift', 'mo-grow', 'mo-glow', 'mo-color'); const f = $('appFaces'); if (f) f.innerHTML = ''; };
   if (!s || !APP_LOOK.on || !s.pal) { clear(); worn = null; updateLookBtn(s); return; }
@@ -285,6 +286,12 @@ function wearStyle(s) {
   set('--line', col(p.border) || (p.text && `color-mix(in srgb, ${p.text} 14%, ${bg})`));
   set('--accent', col(p.accent)); set('--accent-ink', accInk); set('--chip', col(p.surface));
   set('--accent-soft', `color-mix(in srgb, ${col(p.accent)} 10%, ${panel})`);
+  // the quieter surfaces (fields, empty frames, the stage behind a preview) follow the style too, light or dark
+  const darkStyle = (lumOf(bg) ?? 1) < 0.2;
+  set('--field', `color-mix(in srgb, ${panel} 94%, ${ink || col(p.text) || '#000'})`);
+  set('--well', `color-mix(in srgb, ${bg} 88%, ${ink || col(p.text) || '#000'})`);
+  set('--stage', `color-mix(in srgb, ${bg} ${darkStyle ? 70 : 82}%, ${darkStyle ? '#000' : '#8a8178'})`);
+  set('color-scheme', darkStyle ? 'dark' : 'light');
   // buttons take the input's shape
   const tb = T && T.btn;
   const radius = tb && tb.radius != null ? Math.min(tb.radius, 999) : s.btnR != null ? s.btnR : null;
@@ -324,8 +331,29 @@ function wearStyle(s) {
 function updateLookBtn(s) {
   const b = $('lookBtn'); if (!b) return;
   b.hidden = !(B.project && (state.view === 'studio'));
-  b.classList.toggle('on', APP_LOOK.on);
-  b.title = APP_LOOK.on ? 'Reskin is wearing your style — click for Reskin’s own look' : 'Let Reskin wear your page’s style';
+  b.setAttribute('aria-pressed', String(APP_LOOK.on));
+  b.title = APP_LOOK.on ? 'Reskin is wearing your page’s style — click for Reskin’s own look' : 'Let Reskin wear your page’s style';
+}
+
+/* ------------------------------------------------------------------ night mode */
+// Reskin's own look, light or dark: your choice (saved), else your device's setting. index.html sets it before paint.
+const prefersDark = matchMedia('(prefers-color-scheme: dark)');
+const themeNow = () => document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
+function setTheme(t, save) {
+  document.documentElement.dataset.theme = t;
+  if (save) store.set('reskin.theme', t);
+  const b = $('themeBtn'); if (!b) return;
+  b.setAttribute('aria-pressed', String(t === 'dark'));
+  const lbl = t === 'dark' ? 'Night mode is on — switch to day' : 'Night mode';
+  b.title = lbl; b.setAttribute('aria-label', lbl);
+  b.firstElementChild.textContent = t === 'dark' ? '☀' : '☾';
+}
+prefersDark.addEventListener('change', e => { if (!store.get('reskin.theme', null)) setTheme(e.matches ? 'dark' : 'light'); });
+function toggleTheme() {
+  const t = themeNow() === 'dark' ? 'light' : 'dark';
+  setTheme(t, true);
+  // while Reskin wears your page's colours the theme can't show: hand it back to Reskin's own look
+  if (worn && APP_LOOK.on) { APP_LOOK.on = false; store.set('reskin.wear', false); wearStyle(null); toast(`Night mode ${t === 'dark' ? 'on' : 'off'} — “Page style” puts your page’s look back on Reskin`, 4000); }
 }
 // previews (the full-page modal) dress the app too
 {
@@ -898,6 +926,8 @@ document.addEventListener('keydown', e => {
   updateSavedCount();
   const lb = $('lookBtn');
   if (lb) lb.onclick = () => { APP_LOOK.on = !APP_LOOK.on; store.set('reskin.wear', APP_LOOK.on); wearStyle(B.project && state.view === 'studio' ? B.project.style : null); };
+  setTheme(themeNow());
+  $('themeBtn').onclick = toggleTheme;
   // a project already exists: Studio is home
   const id = store.get('reskin.currentProject', null), p = store.get('reskin.projects', []).find(x => x.id === id);
   if (p && p.srcText) {

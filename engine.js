@@ -13,7 +13,7 @@ const SAMPLE = `<!DOCTYPE html>
       <a href="#beans">Beans</a>
       <a href="#lineup">Lineup</a>
       <a href="#visit">Visit</a>
-      <a href="#shop" class="btn">Shop now</a>
+      <a href="#lineup" class="btn">Shop now</a>
     </nav>
   </header>
 
@@ -21,7 +21,7 @@ const SAMPLE = `<!DOCTYPE html>
     <p>Small-batch roasters since 2014</p>
     <h1>Coffee worth waking up for</h1>
     <p>We buy directly from farms we've visited, roast twice a week, and ship within 48 hours — so every cup tastes the way it should.</p>
-    <a href="#shop" class="btn">Shop the roasts</a>
+    <a href="#lineup" class="btn">Shop the roasts</a>
     <a href="#visit">Find our café</a>
   </section>
 
@@ -52,7 +52,7 @@ const SAMPLE = `<!DOCTYPE html>
   <section id="visit">
     <h2>Come say hi</h2>
     <p>Our café and roastery is open daily 7am–5pm at 210 Harbor Street. Pull up a chair and watch us roast.</p>
-    <a href="#map" class="btn">Get directions</a>
+    <a href="https://maps.google.com/" class="btn">Get directions</a>
   </section>
 
   <footer>
@@ -1052,11 +1052,26 @@ function __transplant(DATA) {
   function watch() {
     var key = C && C.hero && C.hero.title && C.hero.title.toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 40);
     if (!key) return;
+    // the menu too: a design's script that builds its own menu after load (from its own data) replaces the user's items
+    var names = (C.nav || []).map(function (n) { return (n.text || '').trim(); }).filter(Boolean);
+    function menu() { if (!names.length) return 0; var k = 0, all = doc.body.querySelectorAll('a,button'); for (var i = 0; i < all.length; i++) if (names.indexOf((all[i].textContent || '').trim()) >= 0) k++; return k; }
+    var hadMenu = menu() > 0, menuTried = false;
+    // no menu placed at all: it may still have been hidden behind an age gate, a cookie wall or an intro. Swap again
+    // once a menu shows near the top.
+    function menuShows() {
+      var c = doc.body.querySelectorAll('header, nav, [role=navigation], [role=banner]');
+      for (var i = 0; i < c.length; i++) {
+        var r = c[i].getBoundingClientRect(), s = getComputedStyle(c[i]); if (r.width < 1 || r.height < 1 || s.display === 'none' || s.visibility === 'hidden' || +s.opacity < 0.05 || r.top > innerHeight * 0.2 || c[i].closest('footer')) continue;
+        var k = 0, l = c[i].querySelectorAll('a,button'); for (var j = 0; j < l.length && k < 2; j++) { var q = l[j].getBoundingClientRect(); if (q.width > 0 && q.height > 0 && getComputedStyle(l[j]).visibility !== 'hidden') k++; }
+        if (k >= 2) return true;
+      }
+      return false;
+    }
     var redo = 0, calm = 0, prev = size(), end = Date.now() + 20000;
     var iv = setInterval(function () {
       var n = size(); calm = n === prev ? calm + 1 : 0; prev = n;
-      var here = (doc.body.textContent || '').toLowerCase().replace(/\s+/g, ' ').indexOf(key) >= 0;
-      if (!here && calm >= 2 && redo < 3) { redo++; calm = 0; try { apply(); } catch (e) { console.error('[reskin]', e); } }
+      var here = (doc.body.textContent || '').toLowerCase().replace(/\s+/g, ' ').indexOf(key) >= 0 && (hadMenu ? menu() > 0 : menuTried || !names.length || !menuShows());
+      if (!here && calm >= 2 && redo < 3) { redo++; calm = 0; try { apply(); } catch (e) { console.error('[reskin]', e); } if (!hadMenu) { hadMenu = menu() > 0; menuTried = true; } }
       if (Date.now() > end || redo >= 3) clearInterval(iv);
     }, 600);
   }
@@ -1120,7 +1135,15 @@ function __transplant(DATA) {
     function resplit(el, t, nodes, byWord) {
       var pieces = nodes.map(function (n) { return n.parentNode; });
       if (pieces.some(function (x) { return x === el || !el.contains(x); })) return false;
-      var tmpl = pieces[0], grp = !byWord && tmpl.parentNode !== el && pieces.every(function (x) { return x.parentNode.parentNode === el; }) ? tmpl.parentNode : null;
+      // the wrappers between the heading and its letters (a line, then a word…): kept, so the layout the design
+      // built for them still holds — letters dropped straight into a column-flex heading would stack one per line
+      var tmpl = pieces[0], chain = [];
+      for (var up = tmpl.parentNode; up && up !== el; up = up.parentNode) chain.push(up);
+      // each wrapper is sorted by what it held: one letter (a mask around it), one word, or the whole line
+      var k = 0, per = [];
+      while (k < chain.length && norm(chain[k].textContent).length <= 1) per.push(chain[k++]);
+      var grp = !byWord && k < chain.length && !/\s/.test(norm(chain[k].textContent)) ? chain[k++] : null;
+      var outer = chain.slice(k).reverse();
       var c0 = S(pieces[0]), c2 = S(pieces[Math.min(2, pieces.length - 1)]), gap = Math.min(2, pieces.length - 1) || 1;
       var a0 = parseFloat(c0.animationDelay) || 0, aStep = ((parseFloat(c2.animationDelay) || 0) - a0) / gap;
       var t0 = parseFloat(c0.transitionDelay) || 0, tStep = ((parseFloat(c2.transitionDelay) || 0) - t0) / gap;
@@ -1128,10 +1151,17 @@ function __transplant(DATA) {
       var sp = motionOf(/^split-/), step = sp && sp.step ? sp.step : 35;
       var vars = ['--i', '--index', '--char-index', '--word-index', '--char', '--delay'].filter(function (v) { return tmpl.style.getPropertyValue(v) !== ''; });
       var flex = /flex|grid/.test(S(el).display);
-      var copy = stand(el), n = 0;
+      var copy = stand(el), n = 0, into = copy;
+      outer.forEach(function (w) {
+        var c = w.cloneNode(false); c.removeAttribute('id');
+        ['opacity', 'transform', 'translate', 'scale', 'rotate', 'visibility'].forEach(function (k) { c.style.removeProperty(k); });   // where its script left it mid-move
+        if (c.hasAttribute('aria-label')) c.setAttribute('aria-label', t);
+        into.appendChild(c); into = c;
+      });
       function piece(text) {
         var x = tmpl.cloneNode(false); x.removeAttribute('id'); x.textContent = text;
-        var i = n++;
+        var i = n++, box = x;
+        per.forEach(function (w) { var c = w.cloneNode(false); c.removeAttribute('id'); c.appendChild(box); box = c; });
         if (aStep > 0) x.style.animationDelay = (a0 + i * aStep).toFixed(3) + 's';
         if (tStep > 0) x.style.transitionDelay = (t0 + i * tStep).toFixed(3) + 's';
         vars.forEach(function (v) { x.style.setProperty(v, v === '--delay' ? (i * step) + 'ms' : String(i)); });
@@ -1139,15 +1169,16 @@ function __transplant(DATA) {
           x.style.opacity = ''; x.style.transform = ''; x.style.visibility = '';
           motionCss(); x.classList.add('rk-in'); x.style.animationDelay = (i * step) + 'ms';
         }
-        return x;
+        return box;
       }
+      flex = /flex|grid/.test(S(into).display);
       var space = function () { if (!flex) return doc.createTextNode(' '); var g = doc.createElement('span'); g.textContent = ' '; g.style.display = 'inline-block'; return g; };
       var words = String(t).split(/\s+/).filter(Boolean);
       words.forEach(function (w, wi) {
-        if (byWord) copy.appendChild(piece(w));
-        else if (grp) { var g = grp.cloneNode(false); g.removeAttribute('id'); Array.from(w).forEach(function (c) { g.appendChild(piece(c)); }); copy.appendChild(g); }
-        else Array.from(w).forEach(function (c) { copy.appendChild(piece(c)); });
-        if (wi < words.length - 1) copy.appendChild(grp || byWord ? space() : piece(' '));
+        if (byWord) into.appendChild(piece(w));
+        else if (grp) { var g = grp.cloneNode(false); g.removeAttribute('id'); Array.from(w).forEach(function (c) { g.appendChild(piece(c)); }); into.appendChild(g); }
+        else Array.from(w).forEach(function (c) { into.appendChild(piece(c)); });
+        if (wi < words.length - 1) into.appendChild(grp || byWord ? space() : piece(' '));
       });
       return true;
     }
@@ -1182,10 +1213,18 @@ function __transplant(DATA) {
       });
     }
     function appendP(after, text) {
+      // step out of wrappers that hold only the title (a "big title" box), or the new line takes on the title's look
+      var only = function (box) { return Array.prototype.filter.call(box.children, function (c) { return !c.hasAttribute('data-rk-orig') && !c.hasAttribute('data-rk-hidden') && S(c).display !== 'none'; }).length === 1; };
+      // …but not out of a box pinned in place (absolute/fixed), where the title sits over a picture or video
+      while (after.parentElement && after.parentElement !== B && !/^(SECTION|MAIN|HEADER|ARTICLE|BODY)$/.test(after.parentElement.tagName) && !/absolute|fixed/.test(S(after.parentElement).position) && only(after.parentElement)) after = after.parentElement;
       var p = doc.createElement('p'); p.textContent = text;
-      p.style.cssText = 'margin-top:1rem;opacity:.8;max-width:44rem;line-height:1.6';
+      var bs = S(B);
+      p.style.cssText = 'margin-top:1rem;opacity:.8;max-width:44rem;line-height:1.6;font-size:max(1rem,' + bs.fontSize + ');font-family:' + bs.fontFamily.replace(/;/g, '') + ';font-weight:400;text-transform:none;letter-spacing:normal';
       if (S(after).textAlign === 'center' || S(after.parentElement || after).textAlign === 'center') p.style.marginInline = 'auto';
-      after.after(p); done.add(p); return p;
+      // a row layout around the wrapper would set the line beside the title: put it inside, under the title
+      var pp = after.parentElement && S(after.parentElement), row = pp && ((/flex/.test(pp.display) && !/column/.test(pp.flexDirection)) || /grid/.test(pp.display));
+      if (row && after.children.length && !/^(H[1-6]|P|SPAN|A|BUTTON)$/.test(after.tagName)) after.appendChild(p); else after.after(p);
+      done.add(p); return p;
     }
 
     // ---- regions: nav (top bar / header / sidebar) and footer
@@ -1196,15 +1235,38 @@ function __transplant(DATA) {
         if (hd.querySelector('h1') || r.height > H * 0.4) hd = hd.querySelector('nav') || null;
         if (hd) return hd;
       }
+      // the header is hidden (a desktop/mobile pair) or missing: the visible menu near the top, wherever it sits —
+      // often laid over the hero rather than in a bar along the edge
+      var shown = function (n) { return Array.prototype.filter.call(n.querySelectorAll('a,button'), vis).length; };
+      var navs = Array.prototype.filter.call(B.querySelectorAll('nav, [role=navigation]'), function (n) {
+        if (!vis(n) || n.closest('footer')) return false;
+        var r = n.getBoundingClientRect(); return r.top + scrollY < H * 0.2 && r.height < H * 0.4 && shown(n) >= 2;
+      }).filter(function (n, i, all) { return !all.some(function (o) { return o !== n && o.contains(n); }); });
+      if (navs.length) return navs.sort(function (x, y) { return shown(y) - shown(x); })[0];
       var els = B.getElementsByTagName('*');
       for (var i = 0; i < els.length && i < 5000; i++) {
         var e = els[i]; if (SK.test(e.tagName)) continue;
         var rr = e.getBoundingClientRect();
         if (((rr.top <= 4 && rr.width >= W * 0.6 && rr.height >= 36 && rr.height <= 130) || (rr.left <= 4 && rr.top <= 90 && rr.height >= H * 0.6 && rr.width >= 56 && rr.width <= 360)) && e.querySelectorAll('a,button').length >= 2) return e;
       }
+      // nothing on screen: the menu sits behind a button (a hamburger overlay). Fill that one, so it holds the
+      // user's pages when it opens.
+      var closed = Array.prototype.filter.call(B.querySelectorAll('nav, [role=navigation]'), function (n) { return !n.closest('footer') && n.querySelectorAll('a[href]').length >= 2; })[0];
+      if (!closed) closed = menuBlock();
+      if (closed) { navClosed = true; return closed; }
       return null;
     }
-    var nav = pickNav(), foot = doc.querySelector('footer');
+    // no <nav> at all (an overlay built from divs): the block named like a menu that holds the most page links —
+    // the innermost one, never the footer or a block holding the page itself
+    function menuBlock() {
+      var named = Array.prototype.filter.call(B.querySelectorAll('[class*="menu" i], [id*="menu" i], [class*="nav" i]'), function (n) {
+        var k = n.querySelectorAll('a[href]').length;
+        return !/^(A|BUTTON|LI|BODY|MAIN)$/.test(n.tagName) && !n.closest('footer') && k >= 3 && k <= 40 && !n.querySelector('h1,main,section');
+      }).map(function (n) { var d = 0; for (var x = n; x; x = x.parentElement) d++; return { n: n, k: n.querySelectorAll('a[href]').length, d: d }; });
+      named.sort(function (a, b) { return b.k - a.k || b.d - a.d; });
+      return named[0] ? named[0].n : null;
+    }
+    var navClosed = false, nav = pickNav(), foot = doc.querySelector('footer');
     var zones = [nav, foot].filter(Boolean);
 
     // ---- headings (tags first; otherwise the biggest text acts as the title)
@@ -1217,6 +1279,18 @@ function __transplant(DATA) {
       // pages: the title must look like one (28px+); components with no headings at all (e.g. MUI Typography divs): the biggest text
       if (big[0] && (big[0].fs >= 28 || (!bySize.length && big[0].fs >= 16 && big[0].fs > (big[1] ? big[1].fs : 0))) && (!bySize[0] || big[0].fs > bySize[0].fs * 1.15)) heads.push({ el: big[0].el, lvl: 1, fs: big[0].fs });
       else if (bySize[0]) bySize[0].lvl = 1;
+    }
+    // the hero title is the first h1 — unless that h1 is a logo, hidden for search engines, a number, or far down the
+    // page, or a heading near the top clearly outranks it. Then the most prominent heading in the first screen and a half.
+    var solid = function (h) { var r = h.el.getBoundingClientRect(), t = norm(h.el.textContent); return r.height >= 12 && r.width >= 20 && !h.el.closest('a') && t.length >= 2 && !/^[\d\s.,:%$€£¥+\-–—]*$/.test(t); };
+    var nearTop = function (h) { return h.el.getBoundingClientRect().top + scrollY < H * 1.5; };
+    var first1 = heads.filter(function (h) { return h.lvl === 1; }).sort(function (a, b) { return before(a.el, b.el) ? -1 : 1; })[0];
+    if (first1) {
+      var lead = heads.filter(function (h) { return h.lvl <= 3 && solid(h) && nearTop(h); }).sort(function (a, b) { return b.fs - a.fs || (before(a.el, b.el) ? -1 : 1); })[0];
+      if (lead && lead !== first1 && (!solid(first1) || !nearTop(first1) || lead.fs >= first1.fs * 1.25)) {
+        heads = heads.filter(function (h) { return h.lvl !== 1 || h === lead; });   // the passed-over h1 (a logo, an SEO line) isn't a section title either
+        lead.lvl = 1;
+      }
     }
     heads.sort(function (a, b) { return a.el === b.el ? 0 : before(a.el, b.el) ? -1 : 1; });
     var h1 = heads.filter(function (h) { return h.lvl === 1; })[0] || null;
@@ -1294,7 +1368,7 @@ function __transplant(DATA) {
 
     // ---- brand + nav
     if (nav) {
-      var links = Array.prototype.slice.call(nav.querySelectorAll('a,button')).filter(function (a) { return vis(a) && !(a.parentElement && a.parentElement.closest('a,button') && nav.contains(a.parentElement.closest('a,button'))); });
+      var links = Array.prototype.slice.call(nav.querySelectorAll(navClosed ? 'a[href]' : 'a,button')).filter(function (a) { return (navClosed || vis(a)) && !(a.parentElement && a.parentElement.closest('a,button') && nav.contains(a.parentElement.closest('a,button'))); });
       var brandEl = nav.querySelector('[class*="logo" i],[class*="brand" i]');
       if (!brandEl) brandEl = links.filter(function (a) { return a.querySelector('img,svg') || /^(\/|#|\.\/|index\.html?)?$/.test(a.getAttribute('href') || ''); })[0] || null;
       if (brandEl) {
@@ -1311,6 +1385,23 @@ function __transplant(DATA) {
       links = links.filter(function (a) { var t = norm(a.textContent); return t && t.length <= 30; });
       var isCta = function (a) { var s = S(a); return a.tagName === 'BUTTON' || !/rgba\(0, 0, 0, 0\)|transparent/.test(s.backgroundColor) || parseFloat(s.borderTopWidth) > 0; };
       var ctas = links.filter(isCta), plain = links.filter(function (a) { return !isCta(a); });
+      // a call to action is the link that looks different from the rest. When the menu items themselves are pills,
+      // boxes or tiles, the biggest group sharing one shape is the menu; only the odd ones out stay buttons.
+      if (plain.length < 2 && ctas.length >= 3) {
+        var look = function (a) { var s = S(a); return [s.display, s.borderTopWidth, s.borderRadius, s.fontSize, s.fontWeight, s.textTransform, s.paddingTop, s.paddingLeft].join('|'); }, groups = {};   // shape, not colour: menus of different-coloured tiles count
+        ctas.forEach(function (a) { (groups[look(a)] = groups[look(a)] || []).push(a); });
+        var big = Object.keys(groups).map(function (k) { return groups[k]; }).sort(function (x, y) { return y.length - x.length; })[0];
+        if (big && big.length >= 2) { plain = plain.concat(big); ctas = ctas.filter(function (a) { return big.indexOf(a) < 0; }); plain.sort(function (x, y) { return before(x, y) ? -1 : 1; }); }
+      }
+      // the visible bar is only a logo and an "open menu" button: the page links are in the same menu, folded away
+      if (plain.length < 2 && !navClosed) {
+        var folded = Array.prototype.filter.call(nav.querySelectorAll('a[href]'), function (a) { var t = norm(a.textContent); return !vis(a) && t && t.length <= 30 && a !== brandEl && !(brandEl && (brandEl.contains(a) || a.contains(brandEl))) && ctas.indexOf(a) < 0 && plain.indexOf(a) < 0; });
+        if (folded.length >= 2) plain = plain.concat(folded).sort(function (x, y) { return before(x, y) ? -1 : 1; });
+        else {   // the bar opens a menu that lives elsewhere in the page
+          var mb = menuBlock();
+          if (mb && !nav.contains(mb) && !mb.contains(nav)) plain = Array.prototype.filter.call(mb.querySelectorAll('a[href]'), function (a) { var t = norm(a.textContent); return t && t.length <= 30; });
+        }
+      }
       var navData = (C.nav || []).slice();
       var li = function (a) { var l = a.closest('li'); return l && nav.contains(l) ? l : a; };
       plain.forEach(function (a, i) { if (i < navData.length) { setText(a, navData[i].text); if (a.tagName === 'A') a.setAttribute('href', navData[i].href || '#'); } else hide(li(a)); });
@@ -1687,12 +1778,23 @@ function __rkUnstick() {
   }
   // 1. a loading screen: fixed, on top of everything, covering the window, still there
   function covers() {
-    var out = [], all = D.body ? D.body.getElementsByTagName('*') : [];
-    for (var i = 0; i < all.length && i < 4000; i++) {
-      var el = all[i], c = cs(el); if (c.position !== 'fixed' || c.display === 'none' || c.visibility === 'hidden' || c.opacity === '0') continue;
-      var r = el.getBoundingClientRect(); if (r.width < innerWidth * 0.85 || r.height < innerHeight * 0.85 || !opaque(c)) continue;
-      var top = D.elementFromPoint(innerWidth / 2, innerHeight / 2); if (top && (el === top || el.contains(top))) out.push(el);
-    }
+    // what's on top at the middle of the window and its fixed ancestors — a page whose text is split into thousands
+    // of letters would push a loader past any fixed-size scan. A loader that lets clicks through is still on top.
+    var out = [], top = D.elementFromPoint(innerWidth / 2, innerHeight / 2), cand = [];
+    for (var x = top; x && x !== D.body && x !== D.documentElement; x = x.parentElement) cand.push(x);
+    var fx = D.body ? D.body.querySelectorAll('body > *, body > * > *') : [];
+    for (var j = 0; j < fx.length; j++) if (cand.indexOf(fx[j]) < 0) cand.push(fx[j]);
+    cand.forEach(function (el) {
+      var c = cs(el); if (c.position !== 'fixed' || c.display === 'none' || c.visibility === 'hidden' || +c.opacity < 0.05) return;
+      var r = el.getBoundingClientRect(); if (r.width < innerWidth * 0.85 || r.height < innerHeight * 0.85 || !opaque(c)) return;
+      if (top && (el === top || el.contains(top))) { out.push(el); return; }
+      if (c.pointerEvents === 'none') {   // click-through: check whether it would be the one on top
+        var was = el.style.getPropertyValue('pointer-events'), pri = el.style.getPropertyPriority('pointer-events'), t2 = null;
+        try { el.style.setProperty('pointer-events', 'auto', 'important'); t2 = D.elementFromPoint(innerWidth / 2, innerHeight / 2); }
+        finally { if (was) el.style.setProperty('pointer-events', was, pri); else el.style.removeProperty('pointer-events'); }
+        if (t2 && (el === t2 || el.contains(t2))) out.push(el);
+      }
+    });
     return out;
   }
   // 2. words and pictures on screen that are still invisible, waiting for a script that won't come
@@ -1712,8 +1814,26 @@ function __rkUnstick() {
       show(el);
     }
   }
+  // 3. a dialog that opens over the page on arrival (a country picker, a newsletter sign-up). Closed through its own
+  // close() for a <dialog>, otherwise hidden with its dimmed backdrop — never by clicking anything in it.
+  var dlgDone = false;
+  function dialogs() {
+    if (dlgDone) return; dlgDone = true;
+    var list = D.querySelectorAll('dialog[open], [role="dialog"], [role="alertdialog"], [aria-modal="true"]');
+    for (var i = 0; i < list.length; i++) {
+      var el = list[i], c = cs(el), r = el.getBoundingClientRect();
+      if (c.display === 'none' || c.visibility === 'hidden' || +c.opacity < 0.05 || r.width * r.height < innerWidth * innerHeight * 0.25) continue;
+      if (!/fixed|absolute/.test(c.position) && el.tagName !== 'DIALOG') continue;
+      if (el.tagName === 'DIALOG' && typeof el.close === 'function') { try { el.close(); } catch (e) {} }
+      if (el.tagName !== 'DIALOG' || el.open) fade(el, 'a dialog that opened over the page — set aside so your page shows');
+      var bd = el.previousElementSibling;   // its backdrop: a fixed, see-through layer over the whole window
+      if (bd) { var bc = cs(bd), br = bd.getBoundingClientRect(); if (bc.position === 'fixed' && br.width >= innerWidth * 0.9 && br.height >= innerHeight * 0.9 && !bd.querySelector('a,button,h1,h2')) fade(bd); }
+      [D.documentElement, D.body].forEach(function (x) { if (cs(x).overflow === 'hidden') x.style.setProperty('overflow', 'auto', 'important'); });
+    }
+  }
   var seenAt = new WeakMap();
   function check() {
+    dialogs();
     covers().forEach(function (el) { var t = seenAt.get(el); if (!t) seenAt.set(el, Date.now()); else if (Date.now() - t > 1500) fade(el, 'a loading screen never finished — hidden so your page shows'); });
     stuck();
   }
@@ -1780,7 +1900,11 @@ function splitFiles(files) {
 }
 const readDataUrl = f => new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.onerror = () => r(null); fr.readAsDataURL(f); });
 
-const TRACKERS = /googletagmanager|google-analytics|gtag\(|\bga\(|doubleclick|connect\.facebook|fbq\(|hotjar|clarity\.ms|segment\.(com|io)|plausible\.io|static\.ads-twitter|analytics\.tiktok|snap\.licdn|klaviyo|_vercel\/insights|_vercel\/speed-insights|cdn\.mxpnl|heap(analytics)?\.|fullstory|posthog|intercom|hs-scripts|hs-analytics|cookiebot|onetrust|cookielaw|complianz|cmplz|cookieyes|iubenda|usercentrics|termly|cookie-script|borlabs|quantcast|didomi|consentmanager/i;
+// Trackers and cookie banners, matched only by where they load from (a script's src) or by their own loader snippet
+// (a short inline script). Never by a word that could appear inside a site's own code ("heap.", "ga(", "intercom").
+const TRACKER_SRC = /googletagmanager\.com|google-analytics\.com|doubleclick\.net|connect\.facebook\.net|static\.hotjar\.com|clarity\.ms\/|cdn\.segment\.(com|io)|plausible\.io\/js|static\.ads-twitter\.com|analytics\.tiktok\.com|snap\.licdn\.com|klaviyo\.com|\/_vercel\/(speed-)?insights|cdn\.mxpnl\.com|heapanalytics\.com|fullstory\.com|(us|eu)-assets\.i\.posthog\.com|widget\.intercom\.io|js\.intercomcdn\.com|js\.hs-(scripts|analytics|banner)\.(com|net)|consent\.cookiebot\.com|cdn\.cookielaw\.org|cookieyes\.com|cdn\.iubenda\.com|usercentrics\.eu|app\.termly\.io|cookie-script\.com|quantcast\.(com|mgr)|sdk\.privacy-center\.org|consentmanager\.net|\/complianz-gdpr|\/borlabs-cookie/i;
+const TRACKER_INLINE = /googletagmanager\.com|google-analytics\.com|function gtag\(|gtag\(\s*['"](js|config|consent)|connect\.facebook\.net|fbq\(\s*['"]init|analytics\.tiktok\.com|static\.hotjar\.com|www\.clarity\.ms|cdn\.segment\.com|static\.klaviyo\.com|var complianz\s*=|\bcmplz_|Cookiebot\b|OptanonWrapper|heap\.load\(|posthog\.init\(|mixpanel\.init\(|window\.Intercom\(|_linkedin_partner_id|\b_hsq\s*=/;
+const isTracker = s => { const src = s.getAttribute('src'); return src ? TRACKER_SRC.test(src) : s.textContent.length < 8000 && TRACKER_INLINE.test(s.textContent); };
 async function prepareHtml(text, assets) {
   const doc = new DOMParser().parseFromString(text, 'text/html');
   doc.querySelectorAll('meta[http-equiv]').forEach(m => /security-policy|refresh/i.test(m.getAttribute('http-equiv')) && m.remove());
@@ -1793,7 +1917,7 @@ async function prepareHtml(text, assets) {
   if (baseEl) { try { const u = new URL(baseEl.getAttribute('href')); if (/^https?:$/.test(u.protocol)) base = u.href; } catch {} }
   doc.querySelectorAll('base').forEach(b => b.remove());
   // trackers never help a design render, and would report every preview back to the site's analytics
-  doc.querySelectorAll('script').forEach(s => { if (TRACKERS.test((s.getAttribute('src') || '') + ' ' + s.textContent.slice(0, 3000))) s.remove(); });
+  doc.querySelectorAll('script').forEach(s => { if (isTracker(s)) s.remove(); });
 
   const isRel = u => u && !/^(data:|https?:|blob:|#|mailto:|tel:|javascript:|\/\/)/i.test(u.trim());
   const find = u => {
@@ -1802,6 +1926,21 @@ async function prepareHtml(text, assets) {
     return assets.get(n.split('/').pop().toLowerCase()) || null;
   };
   const missing = new Set();
+  // No <base>, and files it links to by relative path that weren't dropped with it: a saved page usually still says
+  // where it lives (<link rel="canonical">, og:url). Load them from there — public http(s) addresses only — and say so.
+  let guessed = '';
+  if (!base) {
+    const refs = [...doc.querySelectorAll('link[rel~="stylesheet"][href], script[src], img[src], source[src], video[poster]')].map(e => e.getAttribute('href') || e.getAttribute('src') || e.getAttribute('poster'));
+    if (refs.some(u => isRel(u) && !find(u))) {
+      const canon = doc.querySelector('link[rel~="canonical"][href]'), og = doc.querySelector('meta[property="og:url"][content]');
+      const said = canon ? canon.getAttribute('href') : og ? og.getAttribute('content') : '';
+      try {
+        const u = new URL(said);
+        const local = /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|0\.|\[|.*\.(local|localhost|test|internal)$)/i.test(u.hostname);
+        if (/^https?:$/.test(u.protocol) && !u.username && !local && u.hostname.includes('.')) { base = u.href; guessed = u.hostname; }
+      } catch {}
+    }
+  }
   const fixCss = async css => {
     if (!css || !assets.size || !/url\(/.test(css)) return css;
     for (const m of [...css.matchAll(/url\(\s*(['"]?)([^'")]+)\1\s*\)/g)]) {
@@ -1838,7 +1977,7 @@ async function prepareHtml(text, assets) {
   const liveHtml = '<!doctype html>\n' + doc.documentElement.outerHTML;
   if (!runScripts) doc.querySelectorAll('script').forEach(s => s.remove());
   const html = '<!doctype html>\n' + doc.documentElement.outerHTML;
-  return { html, liveHtml, runScripts, base, missing: [...missing] };
+  return { html, liveHtml, runScripts, base, guessed, missing: [...missing] };
 }
 function missingNote(missing) {
   if (!missing.length) return '';
