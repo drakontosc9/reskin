@@ -525,7 +525,26 @@ function __rkStudio(EDITS, MODE) {
     while ((n = w.nextNode())) if (n.nodeValue.trim() && (!best || n.nodeValue.trim().length > best.nodeValue.trim().length)) best = n;
     if (best) best.nodeValue = t; else el.appendChild(document.createTextNode(t));
   }
+  // ---- beside another component (a search bar next to your navbar): the two share one row. The row takes the
+  //      first one's place, height and stickiness; each new one sits on the side it was dropped.
+  function besideTile(e) {
+    var anchor = document.querySelector('[data-rk-edit="' + e.besideOf + '"]');
+    if (!anchor || !e.doc) return;
+    var pair = anchor.parentElement && anchor.parentElement.classList.contains('rk-pair') ? anchor.parentElement : null;
+    if (!pair) {
+      pair = document.createElement('div'); pair.className = 'rk-pair' + (anchor.classList.contains('rk-navbar') ? ' rk-pair-bar' : '');
+      anchor.parentNode.insertBefore(pair, anchor); pair.appendChild(anchor);
+      if (anchor.style.position === 'sticky') { pair.style.position = 'sticky'; pair.style.top = '0'; anchor.style.position = ''; }
+    }
+    var h = Math.round(anchor.getBoundingClientRect().height) || parseInt(anchor.style.height, 10) || 64;
+    var tile = document.createElement('div');
+    tile.className = 'rk-e rk-tile rk-beside' + (anchor.classList.contains('rk-navbar') ? ' rk-navbar' : ''); tile.setAttribute('data-rk-edit', e.id);
+    tile.style.cssText = 'height:' + Math.max(48, h) + 'px;flex:0 1 ' + (e.width || 340) + 'px;min-width:160px';
+    pair.insertBefore(tile, e.side === 'left' ? anchor : anchor.nextSibling);
+    tileFrame(e.id, e.doc, tile, false).bar = true;
+  }
   EDITS.forEach(function (e) {
+    if (e.mode === 'beside') { besideTile(e); return; }
     var el = e._el; if (!el) return;
     if (e.mode === 'text') { setText(el, e.text || ''); return; }
     if (e.mode === 'style') { Object.keys(e.style || {}).forEach(function (k) { if (e.style[k] !== '' && e.style[k] != null) el.style.setProperty(k, e.style[k], 'important'); }); return; }
@@ -633,6 +652,9 @@ function __rkStudio(EDITS, MODE) {
     '.rk-tile{position:relative;overflow:hidden;border-radius:var(--r,14px);min-height:150px}' +
     '.rk-wording{outline:3px solid #2f6bff!important;outline-offset:4px}' +
     '.rk-tile.rk-navbar{min-height:0;border-radius:0;z-index:40}' +
+    '.rk-pair{display:flex;align-items:stretch;gap:12px;width:100%;position:relative}.rk-pair-bar{z-index:40;gap:0}' +
+    '.rk-pair>.rk-e:not(.rk-beside){flex:1 1 auto;width:auto!important;min-width:0}.rk-pair>.rk-beside{min-height:0}' +
+    '@media (max-width:700px){.rk-pair{flex-wrap:wrap}.rk-pair>.rk-e{flex:1 1 100%!important}}' +
     '.rk-empty{position:absolute;inset:10px;display:grid;place-items:center;text-align:center;padding:14px;border:2px dashed #c9c2b8;border-radius:12px;background:rgba(250,248,245,.94);color:#57524b;font:500 13px/1.45 Inter,system-ui,sans-serif}' +
     '.rk-bento>.rk-c1{grid-column:span 1}.rk-bento>.rk-c2{grid-column:span 2}.rk-bento>.rk-c4{grid-column:1/-1}' +
     '.rk-bento>.rk-tile.rk-center{grid-column:1/-1;justify-self:center;width:calc(var(--rkc,2) * (100% - 60px) / 4 + (var(--rkc,2) - 1) * 20px)}' +
@@ -690,7 +712,13 @@ function __rkStudio(EDITS, MODE) {
       break;
     }
     var t = targetOf(node);
-    if (t && t.editId) return { kind: 'swap', editId: t.editId, el: t.el, label: 'Swap this component' };
+    if (t && t.editId) {
+      // a component already on your page: its left or right edge puts the new one beside it, the middle swaps it
+      var er = t.el.getBoundingClientRect(), zone = Math.min(180, er.width * 0.28);
+      if (er.width >= 120 && x < er.left + zone) return { kind: 'beside', side: 'left', editId: t.editId, el: t.el, label: '⇤ Beside it, on the left' };
+      if (er.width >= 120 && x > er.right - zone) return { kind: 'beside', side: 'right', editId: t.editId, el: t.el, label: 'Beside it, on the right ⇥' };
+      return { kind: 'swap', editId: t.editId, el: t.el, label: 'Swap this component' };
+    }
     // the site's navigation: a navigation component takes its place (with the site's links); anything else dropped on
     // one of its links replaces just that link, and on the bar itself replaces the bar
     var nav = node && node.closest && node.closest('header.nav,aside.side');
@@ -714,6 +742,12 @@ function __rkStudio(EDITS, MODE) {
       return;
     }
     var r = it.el.getBoundingClientRect();
+    if (it.kind === 'beside') {   // a bar on the edge where it'll go
+      var bx = it.side === 'left' ? r.left - 4 : r.right - 4;
+      ol.style.display = 'block'; ol.style.left = bx + 'px'; ol.style.top = (r.top + 2) + 'px'; ol.style.width = '8px'; ol.style.height = Math.max(24, r.height - 4) + 'px';
+      pill.textContent = it.label; pill.style.display = 'block'; pill.style.left = Math.max(90, Math.min(innerWidth - 90, bx + (it.side === 'left' ? 90 : -90))) + 'px'; pill.style.top = Math.min(innerHeight - 20, r.bottom + 18) + 'px';
+      return;
+    }
     ol.style.display = 'block'; ol.style.left = (r.left - 6) + 'px'; ol.style.top = (r.top - 6) + 'px'; ol.style.width = (r.width + 12) + 'px'; ol.style.height = (r.height + 12) + 'px';
     pill.textContent = it.label; pill.style.display = 'block'; pill.style.left = (r.left + r.width / 2) + 'px'; pill.style.top = Math.max(16, r.top - 6) + 'px';
   }
@@ -732,7 +766,7 @@ function __rkStudio(EDITS, MODE) {
     if (!it) return;
     var dt = ev.dataTransfer, files = dt && dt.files ? Array.prototype.slice.call(dt.files) : [];
     var text = dt ? (dt.getData('text/uri-list') || dt.getData('text/plain') || '') : '';
-    var send = { kind: it.kind, addr: it.addr || null, info: it.info || null, editId: it.editId || null, scope: it.scope || null };
+    var send = { kind: it.kind, addr: it.addr || null, info: it.info || null, editId: it.editId || null, scope: it.scope || null, side: it.side || null };
     parent.postMessage({ rkDrop: send, files: files, text: text }, '*');
   });
 
@@ -823,7 +857,7 @@ function __rkStudio(EDITS, MODE) {
     }
     if (d.rkCarryDrop) {
       var p = d.rkCarryDrop, it = intentAt(p.x, p.y, document.elementFromPoint(p.x, p.y)); dragging(false);
-      parent.postMessage({ rkDrop: it ? { kind: it.kind, addr: it.addr || null, info: it.info || null, editId: it.editId || null, scope: it.scope || null } : null, carried: true }, '*');
+      parent.postMessage({ rkDrop: it ? { kind: it.kind, addr: it.addr || null, info: it.info || null, editId: it.editId || null, scope: it.scope || null, side: it.side || null } : null, carried: true }, '*');
     }
     if (d.rkScrollBy) scrollBy(0, d.rkScrollBy);
     if (d.rkEditText) { var te = find(d.rkEditText); if (te) startText(te, d.rkEditText); }
@@ -909,6 +943,7 @@ function studioScript(p, mode) {
     const pc = e.action && e.action.type === 'popup' && compById(e.action.compId);
     return {
       id: e.id, target: e.target, mode: e.mode, inline, action: e.action || null, layout: e.layout || { flow: true, size: 'auto' }, text: e.mode === 'text' ? e.text : undefined, style: e.mode === 'style' ? e.style : undefined,
+      besideOf: e.besideOf || null, side: e.side || null, width: e.width || null,
       links: (e.links || []).map((l, i) => { const lc = l.action && l.action.type === 'popup' && compById(l.action.compId); return { action: l.action, popDoc: lc ? elemDoc(lc, { id: 'pop-' + e.id + '-' + i, recolor: e.recolor }, 'fit', false) : null }; }),
       doc: c && e.mode !== 'action' ? elemDoc(c, { ...e, text: inline ? e.text : null }, inline ? 'crop' : 'fit', !!e.action, mode === 'edit') : null,
       popDoc: pc ? elemDoc(pc, { id: 'pop-' + e.id, recolor: e.recolor }, 'fit', false) : null,
@@ -1186,6 +1221,7 @@ function removeComp(id) {
   comps.list.splice(at, 1);
   if (p && n) {
     p.edits = (p.edits || []).filter(e => !usesIt(e));
+    let orphan; while ((orphan = p.edits.find(e => e.besideOf && !p.edits.some(x => x.id === e.besideOf)))) p.edits = withoutEdit(p.edits, orphan.id);   // what sat beside it goes too
     blocks.forEach(b => { const i = p.blocks.indexOf(b); if (i >= 0) p.blocks.splice(i, 1, ...(b.replaces ? siteBlocks(state.model).filter(x => x.ref === b.replaces) : [])); });
     saveProject();
   }
@@ -1199,6 +1235,12 @@ function removeComp(id) {
     redraw();
   });
 }
+// an edit gone, and whatever sat beside it (a search bar next to a navbar you removed)
+function withoutEdit(list, id) {
+  const gone = new Set([id]); let grew = true;
+  while (grew) { grew = false; list.forEach(e => { if (e.besideOf && gone.has(e.besideOf) && !gone.has(e.id)) { gone.add(e.id); grew = true; } }); }
+  return list.filter(e => !gone.has(e.id));
+}
 function placeComp(compId, it) {
   const c = compById(compId); if (!c || !it) return;
   ensureLibs(c, () => { if (state.view === 'studio') renderStudioPreview(); });
@@ -1208,6 +1250,12 @@ function placeComp(compId, it) {
     const e = editById(it.editId); if (!e) return;
     e.compId = c.id; delete e.inner; delete e.props; delete e.links; msg = `Swapped in “${c.name}”`;
     if (e.layout && e.layout.bar) { const np = navPropsFor(c); e.navFill = np.done; if (Object.keys(np.props).length) e.props = np.props; }
+  } else if (it.kind === 'beside') {
+    // next to a component already on your page (a search bar beside your navbar): they share one row
+    const a = editById(it.editId); if (!a) return;
+    const an = (compById(a.compId) || {}).name || 'it';
+    edits.push({ id: newEditId(), target: a.target, targetLabel: `beside “${an}”`, mode: 'beside', besideOf: a.id, side: it.side === 'left' ? 'left' : 'right', compId: c.id, recolor, layout: { bar: !!(a.layout && a.layout.bar) } });
+    msg = `“${c.name}” sits ${it.side === 'left' ? 'left of' : 'beside'} “${an}”`;
   } else if (it.kind === 'swapblock') {
     const b = blockById(it.scope); if (!b) return;
     b.compId = c.id; b.label = c.name; delete b.inner; delete b.props; msg = `Swapped in “${c.name}”`;
@@ -1231,7 +1279,7 @@ function placeComp(compId, it) {
   } else return;
   saveProject(); renderEditorWs();
   // right after a drop: where it should sit, without hunting for a menu
-  const placed = it.kind === 'swap' || it.kind === 'swapblock' || it.kind === 'nav' ? null : edits[edits.length - 1];
+  const placed = it.kind === 'swap' || it.kind === 'swapblock' || it.kind === 'nav' || it.kind === 'beside' ? null : edits[edits.length - 1];
   const more = placed ? placeItems(placed).map(x => ({ ...x, short: /^Center/.test(x.label) ? 'Center' : /section/.test(x.label) ? 'Own section' : x.label })) : [];
   // "restyle my whole site to match what I add": the drop and the restyle are one step, undone together
   if (ADOPT.on) adoptCompStyle(c, { snap, more, msg }); else toastUndo(msg, snap, more);
@@ -1368,7 +1416,7 @@ addEventListener('message', e => {
   if (d.rkTool) {
     const t = d.rkTool, snap = snapshotPage();
     if (t.action === 'remove') {
-      if (t.editId) { const e = editById(t.editId); B.project.edits = projectEdits().filter(x => x.id !== t.editId); saveProject(); renderEditorWs(); toastUndo(`Removed “${(compById(e && e.compId) || {}).name || 'it'}”`, snap); }
+      if (t.editId) { const e = editById(t.editId); B.project.edits = withoutEdit(projectEdits(), t.editId); saveProject(); renderEditorWs(); toastUndo(`Removed “${(compById(e && e.compId) || {}).name || 'it'}”`, snap); }
       else if (t.blockId) { removeBlock(t.blockId); toastUndo('Removed it', snap); }
     }
     if (t.action === 'swap') { S.swapFor = { editId: t.editId, blockId: t.blockId }; renderEditorWs(); toast('Pick the component to swap in — or drag one onto it'); }
@@ -1498,7 +1546,7 @@ function ctxItems(t) {
   const edits = projectEdits(), items = [];
   if (t.editId) {
     const e = editById(t.editId), c = e && compById(e.compId), snap = snapshotPage();
-    if (!c) return [{ label: 'Remove', icon: '✕', danger: true, run: () => { B.project.edits = edits.filter(x => x.id !== t.editId); saveProject(); renderEditorWs(); toastUndo('Removed', snap); } }];
+    if (!c) return [{ label: 'Remove', icon: '✕', danger: true, run: () => { B.project.edits = withoutEdit(edits, t.editId); saveProject(); renderEditorWs(); toastUndo('Removed', snap); } }];
     // a button or link inside it: say where it goes
     if (t.part) {
       const l = (e.links || []).find(x => x.path === t.part.path);
@@ -1514,7 +1562,7 @@ function ctxItems(t) {
     const pl = placeItems(e); if (pl.length) items.push('-', ...pl);
     items.push('-');
     items.push({ label: 'Swap for another component', icon: '⇄', run: () => { S.swapFor = { editId: e.id }; renderEditorWs(); } });
-    items.push({ label: 'Remove', icon: '✕', danger: true, run: () => { B.project.edits = edits.filter(x => x.id !== t.editId); saveProject(); renderEditorWs(); toastUndo('Removed', snap); } });
+    items.push({ label: 'Remove', icon: '✕', danger: true, run: () => { B.project.edits = withoutEdit(edits, t.editId); saveProject(); renderEditorWs(); toastUndo('Removed', snap); } });
     return items;
   }
   const a = t.addr, snap = snapshotPage();
