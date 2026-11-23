@@ -69,6 +69,25 @@ const clean = s => (s || '').replace(/\s+/g, ' ').trim();
 const INLINE = new Set(['SPAN','STRONG','EM','B','I','A','SMALL','BR','CODE','MARK','U','SUP','SUB','TIME','ABBR','LABEL']);
 const isBtn = a => /btn|button|cta/i.test(typeof a.className === 'string' ? a.className : '') || a.tagName === 'BUTTON';
 
+// width ÷ height of a logo, without loading it: its width/height attributes, a PNG's header, or an SVG's viewBox
+function logoRatio(img) {
+  const w = parseFloat(img.getAttribute('width')), h = parseFloat(img.getAttribute('height'));
+  if (w > 0 && h > 0) return w / h;
+  const src = img.getAttribute('src') || '';
+  try {
+    if (/^data:image\/png;base64,/i.test(src)) {
+      const b = atob(src.slice(src.indexOf(',') + 1, src.indexOf(',') + 45));
+      const u32 = o => ((b.charCodeAt(o) << 24) | (b.charCodeAt(o + 1) << 16) | (b.charCodeAt(o + 2) << 8) | b.charCodeAt(o + 3)) >>> 0;
+      if (b.slice(12, 16) === 'IHDR') { const pw = u32(16), ph = u32(20); if (pw && ph) return pw / ph; }
+    }
+    if (/^data:image\/svg\+xml/i.test(src)) {
+      const svg = /;base64,/i.test(src) ? atob(src.slice(src.indexOf(',') + 1)) : decodeURIComponent(src.slice(src.indexOf(',') + 1));
+      const vb = /viewBox=["']\s*[-\d.]+[\s,]+[-\d.]+[\s,]+([\d.]+)[\s,]+([\d.]+)/i.exec(svg);
+      if (vb && +vb[2] > 0) return +vb[1] / +vb[2];
+    }
+  } catch (e) {}
+  return /horizontal|wordmark|logotype|lockup/i.test(src + ' ' + (img.getAttribute('class') || '')) ? 3 : null;
+}
 function extract(html) {
   const doc = new DOMParser().parseFromString(html, 'text/html');
   // forms first, while their fields are still here: a <form>, or (apps often skip the tag) any group of 2+ fields with a button.
@@ -112,6 +131,8 @@ function extract(html) {
   m.brand = logo ? clean(logo.textContent) : '';
   const logoImg = logo && (logo.tagName === 'IMG' ? logo : logo.querySelector('img'));
   if (logoImg && logoImg.getAttribute('src')) m.logo = { src: logoImg.getAttribute('src'), alt: logoImg.alt || '' };
+  // a wide logo is a wordmark: it already spells the name, so the name isn't written again beside it
+  if (m.logo) { const r = logoRatio(logoImg); if (r && r >= 2.2) m.hideName = true; }
   if (!m.brand && logoImg) m.brand = logoImg.alt;
   // the link back to the home page usually *is* the brand: its words, its picture's alt, or its label
   const firstHead = doc.querySelector('h1,h2');
@@ -280,9 +301,15 @@ function extract(html) {
       else if (b.t === 'btn' && hero.buttons.length < 3) hero.buttons.push(b);
     });
     let j = i0 + 1;
+    // a row of figures under the hero ("$0 / Setup fee", "1-Day / Response time", "24/7"): facts, not paragraphs
+    const isFigure = t => /^[\s$€£¥~+<>≈#]*\d[\d.,/]*\s*(%|[kmb]\b|x\b|\+)?(\s*[-–]?\s*[a-z]{1,8})?\s*$/i.test(t) && t.length <= 14;
+    let fig = null;
     for (; j < blocks.length; j++) {
       const b = blocks[j];
       if (b.t === 'h' || (b.t === 'break' && (hero.paras.length || hero.buttons.length))) break;
+      if (b.t === 'p' && isFigure(b.text)) { fig = { value: b.text, label: '' }; (hero.stats = hero.stats || []).push(fig); continue; }
+      if (b.t === 'p' && fig && !fig.label && b.text.split(/\s+/).length <= 4 && !/[.!?]$/.test(b.text)) { fig.label = b.text; continue; }
+      fig = null;
       if (b.t === 'p') hero.paras.push(b.text);
       else if (b.t === 'btn') hero.buttons.push(b);
       else if (b.t === 'img' && !hero.img) hero.img = b;
@@ -589,6 +616,45 @@ function __probe(ID, AUTO, MAX) {
     Array.prototype.forEach.call(document.querySelectorAll('link[href*="fonts.googleapis.com/css"]'), function (l) { links.push(l.href); });
 
     var bi = S(document.body).backgroundImage, bodyBg = /gradient/.test(bi) ? bi : null;
+    // a texture laid over the whole page (a honeycomb, dots, a grid): a small repeating tile on the page or on a layer
+    // covering it, its ::before/::after too. Photos and one-off pictures don't count.
+    var texture = (function () {
+      var cand = [document.documentElement, document.body], lim = Math.min(els.length, 600);
+      for (var i = 0; i < lim; i++) { var r0 = els[i].getBoundingClientRect(); if (r0.width >= W * 0.8 && r0.height >= H * 0.5 && r0.top < H) cand.push(els[i]); }
+      for (var j = 0; j < cand.length; j++) {
+        var parts = [null, '::before', '::after'];
+        for (var k = 0; k < parts.length; k++) {
+          var c = getComputedStyle(cand[j], parts[k]), img = c.backgroundImage;
+          if (!img || img === 'none' || /gradient/.test(img) && !/repeating/.test(img) || c.backgroundRepeat === 'no-repeat') continue;
+          var sz = c.backgroundSize, tile = /^(\d+(\.\d+)?)px/.exec(sz), small = tile && +tile[1] <= 240;
+          if (!/data:image\/svg|repeating-/.test(img) && !small) continue;
+          if (parts[k] && (c.content === 'none' || c.display === 'none')) continue;
+          return { img: img, size: sz === 'auto' ? 'auto' : sz, opacity: +c.opacity < 1 ? +(+c.opacity).toFixed(2) : 1 };
+        }
+      }
+      return null;
+    })();
+    // the shape pictures are cut to (a hexagon, a circle, an arch): the clip-path or round corners on the main images
+    var imgShape = (function () {
+      var imgs = Array.prototype.filter.call(document.images, function (im) { var r = im.getBoundingClientRect(); return r.width >= 120 && r.height >= 120; });
+      var shapes = {};
+      imgs.forEach(function (im) {
+        for (var x = im, d = 0; x && d < 3; x = x.parentElement, d++) {
+          var c = S(x), cp = c.clipPath;
+          if (cp && cp !== 'none' && /polygon|circle|ellipse|path/.test(cp)) { shapes[cp] = (shapes[cp] || 0) + 1; break; }
+          var r = x.getBoundingClientRect(); if (parseFloat(c.borderTopLeftRadius) >= Math.min(r.width, r.height) / 2 - 1 && Math.abs(r.width - r.height) < 4) { shapes['circle(50%)'] = (shapes['circle(50%)'] || 0) + 1; break; }
+        }
+      });
+      var best = Object.keys(shapes).sort(function (a, b) { return shapes[b] - shapes[a]; })[0];
+      return best && shapes[best] >= 1 ? best : null;
+    })();
+    // the hero: headline beside its main picture (split) or stacked
+    var heroSplit = (function () {
+      var h1 = document.querySelector('h1'); if (!h1) return null;
+      var hr = h1.getBoundingClientRect(); if (hr.top > H) return null;
+      var pics = Array.prototype.filter.call(document.querySelectorAll('img,video,canvas,svg'), function (m) { var r = m.getBoundingClientRect(); return r.width >= W * 0.18 && r.height >= 160 && r.top < H && r.bottom > hr.top; });
+      return pics.some(function (m) { var r = m.getBoundingClientRect(); return r.left > hr.right - 20 || r.right < hr.left + 20; });
+    })();
     var card = cardT.list()[0] ? cardT.list()[0].v : null;
     var clone = document.body.cloneNode(true);
     Array.prototype.forEach.call(clone.querySelectorAll('script,style,noscript,template'), function (n) { n.remove(); });
@@ -602,7 +668,7 @@ function __probe(ID, AUTO, MAX) {
         headFont: headFont, headWeight: hs ? hs.fontWeight : '700', headSize: head ? head.fs : 32,
         headLs: hs && hs.letterSpacing !== 'normal' ? +(parseFloat(hs.letterSpacing) / head.fs).toFixed(3) : 0,
         headCaps: hs ? hs.textTransform === 'uppercase' : false,
-        bodyFont: bodyFont, side: areaTokens(side), topbar: areaTokens(topbar), bodyBg: bodyBg,
+        bodyFont: bodyFont, side: areaTokens(side), topbar: areaTokens(topbar), bodyBg: bodyBg, texture: texture, imgShape: imgShape, heroSplit: heroSplit,
         faces: faces.join('\n'), fontLinks: links,
         motion: (function () { try { return readMotion(); } catch (e) { return { items: [], libs: [], error: e.message }; } })()
       }
@@ -1656,6 +1722,88 @@ const tw4Theme = vars => {
   const v = vars && (vars['--background'] || vars['--primary']);
   return v && !/^\s*[\d.]+\s+[\d.]+%/.test(v) ? TW4_THEME_HSL.replace(/hsl\((var\(--[\w-]+\))\)/g, '$1') : TW4_THEME_HSL;
 };
+/* ---- several files pasted at once → one component ----
+   21st.dev's "Copy all files" ("// --- Component ---", "// --- Demo ---"), Reskin's own "/* ---- x.css ---- *\/" sections,
+   "// components/ui/x.tsx" path lines, or Markdown code fences (an agent prompt). The files are joined into one module:
+   imports between them are dropped (everything shares one scope now), the rest are merged so nothing is imported twice,
+   and the demo — the part that uses the others — becomes what's shown. One file in, the same file out. */
+function mergePastedFiles(text) {
+  text = String(text || '');
+  // Markdown: keep only the code blocks (named by their info string or the line above), not the instructions around them
+  if (/^```/m.test(text)) {
+    const blocks = [], re = /(?:^|\n)([^\n]*)\n```([^\n]*)\n([\s\S]*?)\n```/g; let m;
+    while ((m = re.exec(text))) {
+      const info = m[2].trim(), lang = info.split(/\s+/)[0].toLowerCase();
+      if (/^(bash|sh|shell|zsh|console|powershell|ps1|json|md|markdown|text|txt)$/.test(lang)) continue;
+      const named = (/title=["']([^"']+)["']/.exec(info) || /([\w@./-]+\.(?:tsx|jsx|ts|js|css))\b/.exec(info) || /([\w@./-]+\.(?:tsx|jsx|ts|js|css))\b/.exec(m[1]) || [])[1];
+      blocks.push((named ? `// --- ${named} ---\n` : '') + m[3]);
+    }
+    if (blocks.length) text = blocks.join('\n\n');
+  }
+  const MARK = /^[ \t]*(?:\/\/[ \t]*-{2,}[ \t]*(.+?)[ \t]*-{2,}[ \t]*|\/\*[ \t]*-{2,}[ \t]*(.+?)[ \t]*-{2,}[ \t]*\*\/[ \t]*|\/\/[ \t]*(?:file:[ \t]*)?([\w@./-]+\.(?:tsx|jsx|ts|js|css))[ \t]*|([\w@./-]+\.(?:tsx|jsx|ts|js|css)))$/gim;
+  const parts = []; let last = 0, name = '', m;
+  while ((m = MARK.exec(text))) {
+    const body = text.slice(last, m.index);
+    if (body.trim()) parts.push({ name, code: body });
+    name = (m[1] || m[2] || m[3] || m[4] || '').trim(); last = m.index + m[0].length;
+  }
+  if (text.slice(last).trim()) parts.push({ name, code: text.slice(last) });
+  const isCss = p => /\.(css|scss|sass|less)$/i.test(p.name) || (!/\b(import|export|function|const|return)\b/.test(p.code) && /[.#@a-z][^{}]*\{[^{}]*:[^{}]*\}/i.test(p.code));
+  const js = parts.filter(p => !isCss(p)), css = parts.filter(isCss);
+  if (parts.length < 2 || !js.length) return text;
+
+  const IMPORT = /^[ \t]*import\s+(type\s+)?([\s\S]*?)\s+from\s+(['"])([^'"]+)\3[ \t]*;?[ \t]*$/gm, SIDE = /^[ \t]*import\s+(['"])([^'"]+)\1[ \t]*;?[ \t]*$/gm;
+  const isLocal = s => /^(\.|\/|~\/|@\/|src\/)/.test(s), base = s => s.split('/').pop().replace(/\.(tsx|jsx|ts|js)$/, '').toLowerCase();
+  // what each part defines and exports by default
+  js.forEach(p => {
+    p.defs = new Set([...p.code.matchAll(/^[ \t]*(?:export\s+)?(?:default\s+)?(?:async\s+)?(?:function\*?|class|const|let|var)\s+([A-Za-z_$][\w$]*)/gm)].map(x => x[1]));
+    const d = /^[ \t]*export\s+default\s+(?:async\s+)?(?:function\*?|class)\s+([A-Za-z_$][\w$]*)/m.exec(p.code) || /^[ \t]*export\s+default\s+([A-Za-z_$][\w$]*)\s*;?[ \t]*$/m.exec(p.code) || /^[ \t]*export\s+default\s+\{\s*([A-Za-z_$][\w$]*)/m.exec(p.code);
+    p.def = d ? d[1] : null;
+  });
+  // the one that's shown: a part called demo / usage / example / preview, else the one that uses the others, else the last
+  const show = js.find(p => /demo|usage|example|preview/i.test(p.name)) || js.slice().reverse().find(p => js.some(o => o !== p && [...o.defs].some(n => new RegExp('<' + n + '\\b').test(p.code)))) || js[js.length - 1];
+  const fileOf = spec => js.find(p => p.name && base(p.name) === base(spec)) || null;
+  const mods = new Map(), side = new Set(), alias = [];
+  const mod = s => { if (!mods.has(s)) mods.set(s, { def: new Set(), ns: new Set(), named: new Set(), types: new Set() }); return mods.get(s); };
+  js.forEach(p => {
+    let code = p.code.replace(/^[ \t]*['"]use (client|server)['"];?[ \t]*$/gm, '');
+    code = code.replace(SIDE, (all, q, s) => { if (!(isLocal(s) && fileOf(s))) side.add(s); return ''; });
+    code = code.replace(IMPORT, (all, type, clause, q, spec) => {
+      const target = isLocal(spec) ? fileOf(spec) : null;
+      const names = [], dm = /^\s*([A-Za-z_$][\w$]*)\s*(?:,|$)/.exec(clause), ns = /\*\s+as\s+([A-Za-z_$][\w$]*)/.exec(clause), br = /\{([\s\S]*)\}/.exec(clause);
+      const named = br ? br[1].split(',').map(s => s.trim()).filter(Boolean) : [];
+      // another pasted file (by its path, or because another part defines every name): shared scope now
+      const local = isLocal(spec) && (target || (named.length && named.every(n => js.some(o => o !== p && o.defs.has(n.replace(/^type\s+/, '').split(/\s+as\s+/)[0].trim())))));
+      if (local) {
+        if (dm && target && target.def && dm[1] !== target.def) alias.push(`const ${dm[1]} = ${target.def};`);
+        named.forEach(n => { const [a, b] = n.replace(/^type\s+/, '').split(/\s+as\s+/).map(x => x.trim()); if (b && b !== a) alias.push(`const ${b} = ${a};`); });
+        return '';
+      }
+      const e = mod(spec);
+      if (type) { e.types.add(all.trim().replace(/;?$/, ';')); return ''; }
+      if (dm) e.def.add(dm[1]);
+      if (ns) e.ns.add(ns[1]);
+      named.forEach(n => e.named.add(n));
+      return '';
+    });
+    // only the shown part keeps a default export; the others' default becomes a plain one
+    if (p !== show) code = code.replace(/^([ \t]*)export\s+default\s+(?=(?:async\s+)?(?:function|class)\b)/gm, '$1export ').replace(/^[ \t]*export\s+default\s+(?:[A-Za-z_$][\w$]*|\{[^}]*\})\s*;?[ \t]*$/gm, '');
+    else code = code.replace(/^([ \t]*)export\s+default\s+\{\s*([A-Za-z_$][\w$]*)[^}]*\}\s*;?/m, '$1export default $2;');
+    p.out = code.replace(/^\s*\n/, '').replace(/\s+$/, '');
+  });
+  const head = [];
+  side.forEach(s => head.push(`import '${s}';`));
+  mods.forEach((e, s) => {
+    e.types.forEach(t => head.push(t));
+    const defs = [...e.def], named = [...e.named].filter((n, i, a) => a.indexOf(n) === i);
+    e.ns.forEach(n => head.push(`import * as ${n} from '${s}';`));
+    if (defs.length || named.length) head.push(`import ${[defs[0], named.length ? `{ ${named.join(', ')} }` : ''].filter(Boolean).join(', ')} from '${s}';`);
+    defs.slice(1).forEach(d => head.push(`import ${d} from '${s}';`));
+  });
+  const ordered = js.filter(p => p !== show).concat(show);
+  return [head.join('\n'), ...ordered.map(p => `// --- ${p.name || 'part'} ---\n${p.out}`), alias.filter((a, i, l) => l.indexOf(a) === i).join('\n'),
+    ...css.map(p => `/* ---- ${/\.\w+$/.test(p.name) ? p.name : (p.name || 'styles') + '.css'} ---- */\n${p.code.trim()}`)].filter(s => s && s.trim()).join('\n\n') + '\n';
+}
 // mount (optional): { name, props } — show that component with those props (Studio's component settings)
 // opt.inspect: click-to-edit mode — compile with source tags and run the part inspector
 // opt.libs: the component's libraries (c.libs) — Tailwind 4 and its theme variables when it needs them
@@ -2177,7 +2325,8 @@ const firstFamily = stack => { const f = (stack || '').split(',')[0].trim().repl
 function targetStyle(T, o = {}) {
   const exact = !!o.exact;
   const nav = o.nav || (exact ? (T.side ? 'side' : 'bar') : pick(T.side ? ['side', 'side', 'bar', 'pill'] : ['bar', 'bar', 'center', 'pill', 'side']));
-  const hero = o.hero || (exact ? (nav === 'side' ? 'left' : 'center') : pick(['left', 'center', 'split', 'big']));
+  // the exact match keeps the design's hero: headline beside its picture when the design does that
+  const hero = o.hero || (exact ? (nav === 'side' ? 'left' : T.heroSplit ? 'split' : 'center') : pick(['left', 'center', 'split', 'big']));
   const cards = o.cards || (exact ? (T.card ? (T.card.bg && !T.card.bw ? 'filled' : 'bordered') : 'plain') : pick(['bordered', 'bordered', 'filled', 'plain', 'rows']));
   const bg = T.bg, text = T.text, dark = Cx.lum(bg) < 0.3;
   let accent = o.accent || T.accent || (T.btn && T.btn.bg) || text;
@@ -2189,9 +2338,10 @@ function targetStyle(T, o = {}) {
   const border = (T.card && T.card.border) || T.border || Cx.mix(text, bg, 0.86);
   const navArea = nav === 'side' ? (T.side || T.topbar) : (T.topbar || T.side);
   const pal = {
-    bg: Cx.css(bg), bodyBg: T.bodyBg ? `${T.bodyBg}, ${Cx.css(bg)}` : null, surface: Cx.css(surface), card: Cx.css(card),
+    // the design's page texture (a honeycomb, dots, a grid) under its gradient, over its colour
+    bg: Cx.css(bg), bodyBg: T.bodyBg || T.texture ? [T.texture && T.texture.opacity < 1 ? `linear-gradient(rgb(${bg.slice(0, 3).join(' ')} / ${(1 - T.texture.opacity).toFixed(2)}), rgb(${bg.slice(0, 3).join(' ')} / ${(1 - T.texture.opacity).toFixed(2)}))` : null, T.texture ? `${T.texture.img} 0 0${T.texture.size && T.texture.size !== 'auto' ? ' / ' + T.texture.size : ''} repeat` : null, T.bodyBg, Cx.css(bg)].filter(Boolean).join(', ') : null,   // a faint texture: the page colour washed over it surface: Cx.css(surface), card: Cx.css(card),
     text: Cx.css(text), muted: Cx.css(T.muted || Cx.mix(text, bg, 0.42)), accent: Cx.css(accent), accentText: Cx.css(accentText),
-    border: Cx.css(border), heroBg: Cx.css(bg), heroText: Cx.css(text),
+    border: Cx.css(border), heroBg: T.texture ? 'transparent' : Cx.css(bg), heroText: Cx.css(text),   // the page's texture shows through the hero
     navBg: Cx.css(navArea ? navArea.bg : bg), navText: Cx.css(navArea ? navArea.text : text),
     deco: `linear-gradient(135deg, ${Cx.css(accent)}, ${Cx.css(Cx.mix(accent, bg, 0.55))})`,
   };
@@ -2201,6 +2351,8 @@ function targetStyle(T, o = {}) {
   const h1 = nav === 'side' ? Math.max(36, Math.min(60, headPx * 1.3)) : Math.max(44, Math.min(88, headPx * 1.6));
   const headExtra = (T.fontLinks || []).map(l => `<link href="${esc(l)}" rel="stylesheet">`).join('') + (T.faces ? `<style>${T.faces}</style>` : '');
   const extraCss = `.btn{font-weight:${b.weight || 600};${b.transform && b.transform !== 'none' ? `text-transform:${b.transform};` : ''}${b.ls && b.ls !== 'normal' ? `letter-spacing:${b.ls};` : ''}${b.padY ? `padding:${Math.round(Math.max(b.padY, 8) * 1.25)}px ${Math.round(Math.max(b.padX, 14) * 1.2)}px;` : ''}${b.bw ? `border-width:${b.bw}px;` : ''}}`;
+  // the shape the design cuts its pictures to (a hexagon, a circle): the hero picture takes it, square so it isn't squashed
+  const shapeCss = T.imgShape ? `.hero-visual img,.hero-media img,.hero-visual .img,.hero-media .img{clip-path:${T.imgShape};aspect-ratio:1/1;object-fit:cover;border-radius:0}.hero-visual,.hero-media{background:none;box-shadow:none;border:0;border-radius:0}` : '';
   const word = exact ? '' : pick(['Echo', 'Remix', 'Riff', 'Twin', 'Mirror', 'Variant', 'Spin']);
   return {
     id: newId(), arch: 'target', label: `Like ${T.name}`, target: T.name, exact,
@@ -2211,7 +2363,7 @@ function targetStyle(T, o = {}) {
     fd: T.headFont, fb: T.bodyFont, dw: T.headWeight || 700, dls: `${T.headLs || 0}em`, caps: !!T.headCaps,
     h1: Math.round(h1), heroPad: nav === 'side' ? 72 : 112, secPad: nav === 'side' ? 72 : 96, bullet: '"•"', navCaps: false,
     nav, hero, cards, alt: o.alt ?? (exact ? !!T.surface : chance(.5)), centerHeads: o.centerHeads ?? (exact ? hero === 'center' : chance(.4)),
-    headExtra, extraCss, accentRgb: accent,
+    headExtra, extraCss: extraCss + shapeCss, accentRgb: accent,
   };
 }
 
@@ -2286,7 +2438,7 @@ function renderSite(m, s, opt = {}) {
   const nav = `<header class="nav nav-${s.nav}"><div class="wrap">${brand}${navLinks ? `<ul>${navLinks}</ul>` : ''}${cta}</div></header>`;
 
   const h = m.hero;
-  const heroText = `${h.eyebrow ? `<span class="eyebrow">${esc(h.eyebrow)}</span>` : ''}<h1>${esc(h.title)}</h1>${h.paras.slice(0, 2).map(t => `<p>${esc(t)}</p>`).join('')}${btns(h.buttons)}`;
+  const heroText = `${h.eyebrow ? `<span class="eyebrow">${esc(h.eyebrow)}</span>` : ''}<h1>${esc(h.title)}</h1>${h.paras.slice(0, 2).map(t => `<p>${esc(t)}</p>`).join('')}${btns(h.buttons)}${(h.stats || []).length ? `<dl class="hero-stats">${h.stats.slice(0, 4).map(x => `<div><dt>${esc(x.value)}</dt>${x.label ? `<dd>${esc(x.label)}</dd>` : ''}</div>`).join('')}</dl>` : ''}`;
   let hero;
   if (s.hero === 'split') hero = `<section class="hero hero-split"><div class="wrap"><div class="hero-text">${heroText}</div><div class="hero-visual">${h.img ? img(h.img, 'img fill') : '<span class="deco-dot"></span>'}</div></div></section>`;
   else hero = `<section class="hero hero-${s.hero}"><div class="wrap"><div class="hero-text">${heroText}</div>${h.img ? `<div class="hero-media">${img(h.img, 'img fill')}</div>` : ''}</div></section>`;
@@ -2398,7 +2550,9 @@ ${s.editorial ? '.nav-center{border-bottom:3px double var(--border)}' : ''}
 .btn{display:inline-flex;align-items:center;gap:8px;padding:15px 28px;font-weight:600;font-size:16px;line-height:1;text-decoration:none;border-radius:var(--btn-r);background:var(--accent);color:var(--accent-text);border:var(--bw) solid var(--accent);box-shadow:var(--btn-shadow);font-family:var(--fb);${s.caps ? 'text-transform:uppercase;letter-spacing:.04em;font-size:14px;' : ''}transition:transform .15s}
 .btn:hover{transform:translateY(-2px)}
 .btn.alt{background:transparent;color:inherit;border-color:currentColor;box-shadow:none}
-.btn-sm{padding:11px 20px;font-size:14px}
+.btn-sm{padding:11px 20px;font-size:14px;white-space:nowrap;flex:none}
+.hero-stats{display:flex;flex-wrap:wrap;gap:12px 36px;margin:32px 0 0;padding:20px 0 0;border-top:var(--bw) solid var(--border)}.hero-center .hero-stats{justify-content:center}
+.hero-stats div{min-width:72px}.hero-stats dt{font-family:var(--fd);font-weight:var(--dw);font-size:28px;line-height:1.1;color:var(--text)}.hero-stats dd{margin:4px 0 0;font-size:13px;color:var(--muted)}
 .btns{display:flex;gap:14px;flex-wrap:wrap;margin-top:34px}
 .btns.center{justify-content:center}
 .link{display:inline-block;margin-top:14px;font-weight:600;color:var(--accent);text-decoration:none}

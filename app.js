@@ -756,7 +756,7 @@ function renderComps() {
       <button class="primary" id="cAddLink">${comps.busy ? '<span class="spin"></span>Fetching…' : 'Add'}</button>
       <button class="ghost" id="cPasteBtn">Paste code</button>
       <button class="ghost" id="cFileBtn">Upload</button>
-      ${comps.pasting ? `<div class="cpaste"><textarea id="cCode" spellcheck="false" placeholder="Paste HTML (+ <style>) or a React component (TSX/JSX) — e.g. from 21st.dev's Copy code button"></textarea>
+      ${comps.pasting ? `<div class="cpaste"><textarea id="cCode" spellcheck="false" placeholder="Paste HTML (+ <style>) or a React component (TSX/JSX) — one file, or all its files at once, e.g. 21st.dev's “Copy all files”"></textarea>
         <div class="row"><input id="cName" placeholder="Name (optional)"><button class="primary" id="cSavePaste">Save component</button></div></div>` : ''}
     </div>
     <div class="csrc">Browse: <a href="https://uiverse.io" target="_blank" rel="noopener">uiverse.io</a> · <a href="https://mui.com/material-ui/all-components/" target="_blank" rel="noopener">MUI</a> · <a href="https://21st.dev/community/components" target="_blank" rel="noopener">21st.dev</a> — open a component there, copy its address, paste it above. You can also drop .html / .tsx files here.
@@ -794,7 +794,7 @@ function renderComps() {
   $('cProxy').onchange = e => { const v = e.target.value.trim(); store.set('reskin.proxy', v === DEFAULT_PROXY ? '' : v); toast(v ? 'Link proxy saved' : 'Using the built-in proxy'); };
   $('cPasteBtn').onclick = () => { comps.pasting = !comps.pasting; renderComps(); if (comps.pasting) $('cCode').focus(); };
   if (comps.pasting) $('cSavePaste').onclick = () => {
-    const code = $('cCode').value.trim(); if (!code) return;
+    const code = mergePastedFiles($('cCode').value.trim()); if (!code.trim()) return;   // one file, or all of them at once
     const kind = detectKind(code), name = $('cName').value.trim() || guessCompName(code, kind);
     comps.pasting = false;
     addComps([{ name, source: 'pasted', kind, code: kind === 'html' && !/<html|<body/i.test(code) ? uiverseDoc(code.replace(/<style[\s\S]*?<\/style>/gi, ''), [...code.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/gi)].map(m => m[1]).join('\n')) : code }]);

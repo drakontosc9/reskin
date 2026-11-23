@@ -1037,6 +1037,40 @@ function renderFilm() {
   $('filmSave').onclick = () => { toggleSave(p.style); $('filmSave').textContent = isSaved(p.style) ? '♥ Saved' : '♡ Save this style'; };
 }
 
+/* ---- "Restyle my whole site to match what I add" ----
+   One saved choice, shown wherever components get added. When it's on, a component you put on your page also hands
+   its look to your whole site: its colours, fonts and button shape become your page's template (the exact match).
+   Undo puts your template back. */
+const ADOPT = { on: store.get('reskin.adoptStyle', false) };
+const adoptBox = id => `<label class="adopt-box" title="When you put a component on your page, your whole site takes its colours, fonts and button shape"><input type="checkbox" id="${id}" ${ADOPT.on ? 'checked' : ''}><span>Restyle my whole site to match what I add</span></label>`;
+function wireAdopt(id) {
+  const b = $(id); if (!b) return;
+  b.onchange = () => {
+    ADOPT.on = b.checked; store.set('reskin.adoptStyle', ADOPT.on);
+    document.querySelectorAll('.adopt-box input').forEach(x => { x.checked = ADOPT.on; });
+    toast(ADOPT.on ? 'Components you add will restyle your whole site' : 'Components you add keep your site’s style', 3000);
+  };
+}
+async function adoptCompStyle(c, from = {}) {
+  const p = B.project; if (!p || !c) return;
+  const was = { style: p.style, tgt: state.tgt, styles: state.styles, mood: state.mood, varOf: state.varOf };
+  toast(`Reading “${c.name}”’s style…`, 2500);
+  setTarget({ name: c.name, text: c.code, kind: c.kind, assets: new Map(), tokens: null });
+  try { await loadTarget(); } catch (e) {}
+  if (!state.tgt || !state.tgt.tokens) { Object.assign(state, { tgt: was.tgt }); if (from.msg) toastUndo(from.msg, from.snap, from.more); toast(`Couldn’t read “${c.name}”’s style — your site keeps its own`, 4500); return; }
+  try { await measureSource(); } catch (e) {}
+  state.mood = 'target'; state.styles = batch(12, 'target', true); state.varOf = null;
+  const st = state.styles.find(s => s.exact && !s.live) || state.styles.find(s => !s.live);
+  if (!st) return;
+  p.style = st; saveProject();
+  if (state.view === 'studio') renderStudio(); else if (typeof wearStyle === 'function') wearStyle(null);
+  toastUndo(`${from.msg ? from.msg + ' — and ' : ''}your whole site now wears “${c.name}”’s style`, () => {
+    p.style = was.style; Object.assign(state, { tgt: was.tgt, styles: was.styles, mood: was.mood, varOf: was.varOf });
+    if (from.snap) restorePage(from.snap); else saveProject();
+    if (state.view === 'studio') renderStudio();
+  }, from.more);
+}
+
 function applyStyleDialog(c) {
   const d = document.createElement('div'); d.className = 'st-dlg';
   d.innerHTML = `<div class="st-dlg-box"><h3>Apply “${esc(c.name)}”’s style to…</h3>
@@ -1081,9 +1115,10 @@ function renderEditorWs() {
       <div class="bx-panel st-rail">
         <div class="bx-h"><h3>Components <small>· drag one onto your page</small></h3></div>
         <form class="st-add" id="stAdd">
-          <input id="stAddIn" placeholder="Paste a link or code — uiverse, 21st.dev, React Bits, MUI…" autocomplete="off">
+          <input id="stAddIn" placeholder="Paste a link or code (all files at once is fine) — uiverse, 21st.dev, React Bits, MUI…" autocomplete="off">
           <div class="bx-row"><button class="primary" id="stAddGo" type="submit">Add</button><button class="ghost" type="button" id="stAddFile">Upload a file</button></div>
           <p class="st-muted">Or drop a file — or drag a component’s link from another tab — straight onto your page.</p>
+          ${adoptBox('stAdopt')}
         </form>
         ${S.swapFor ? `<div class="st-banner st-swapbar"><span>⇄ Pick the component to swap in</span><button class="ghost" id="stSwapX" type="button">Cancel</button></div>` : ''}
         <div class="st-chips" id="stRail">${comps.list.length ? '' : '<div class="bx-empty">No components yet — paste a link above.</div>'}</div>
@@ -1110,10 +1145,17 @@ function renderEditorWs() {
   });
   S.flash = null;
   if ($('stSwapX')) $('stSwapX').onclick = () => { S.swapFor = null; renderEditorWs(); };
-  $('stAdd').onsubmit = async e => {
-    e.preventDefault(); const v = $('stAddIn').value.trim(); if (!v) return;
+  const addPasted = async v => {
     const id = await importDropped([], v);
     if (id) { $('stAddIn').value = ''; S.flash = id; renderEditorWs(); toast(`Added “${compById(id).name}” — drag it onto your page`, 3500); }
+  };
+  $('stAdd').onsubmit = async e => { e.preventDefault(); const v = $('stAddIn').value.trim(); if (v) addPasted(v); };
+  wireAdopt('stAdopt');
+  // a one-line field would squash pasted code (one file or "Copy all files") into a single line: take it whole, add it now
+  $('stAddIn').onpaste = e => {
+    const t = (e.clipboardData && e.clipboardData.getData('text')) || '';
+    if (!/\n/.test(t.trim())) return;
+    e.preventDefault(); toast('Adding the pasted code…', 2000); addPasted(t);
   };
   $('stAddFile').onclick = () => { const i = document.createElement('input'); i.type = 'file'; i.multiple = true; i.accept = '.html,.htm,.tsx,.jsx,image/*'; i.onchange = async () => { const id = await importDropped([...i.files], ''); if (id) { S.flash = id; renderEditorWs(); toast('Added — drag it onto your page'); } }; i.click(); };
   wireStToolbar();
@@ -1191,7 +1233,8 @@ function placeComp(compId, it) {
   // right after a drop: where it should sit, without hunting for a menu
   const placed = it.kind === 'swap' || it.kind === 'swapblock' || it.kind === 'nav' ? null : edits[edits.length - 1];
   const more = placed ? placeItems(placed).map(x => ({ ...x, short: /^Center/.test(x.label) ? 'Center' : /section/.test(x.label) ? 'Own section' : x.label })) : [];
-  toastUndo(msg, snap, more);
+  // "restyle my whole site to match what I add": the drop and the restyle are one step, undone together
+  if (ADOPT.on) adoptCompStyle(c, { snap, more, msg }); else toastUndo(msg, snap, more);
   if (!c.tokens) ensureCompTokens(c);   // read its colours for next time (brand-colour matching)
 }
 // anything dropped from outside Reskin (a file, a link, some code) becomes a component first
@@ -1208,7 +1251,7 @@ async function importDropped(files, text) {
     if (!items.length && text && !/^reskin-component:/.test(text)) {
       const first = text.split(/\s+/)[0];
       if (/^https?:\/\//.test(first) || /^(www\.)?(uiverse\.io|21st\.dev|mui\.com|reactbits\.dev)\//.test(first)) { toast('Fetching the component…', 2500); items.push(...await importByLink(first)); }
-      else if (/[<{]|^\s*(import|export|const|function)\b/.test(text)) { const kind = detectKind(text); items.push({ name: guessCompName(text, kind), source: 'pasted', kind, code: text }); }
+      else if (/[<{]|^\s*(import|export|const|function|\/\/)/.test(text)) { text = mergePastedFiles(text); const kind = detectKind(text); items.push({ name: guessCompName(text, kind), source: 'pasted', kind, code: text }); }
     }
     if (!items.length) { if (text || (files && files.length)) toast('That isn’t a component Reskin can use — try a link, code, an .html/.tsx file or a picture', 4500); return null; }
     await readyComps(items);

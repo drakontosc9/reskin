@@ -55,12 +55,12 @@ function renderLibrary() {
         <ol><li>Open its page${fz.from ? ` (<a href="${esc(fz.from)}" target="_blank" rel="noopener">${esc(new URL(fz.from).hostname + new URL(fz.from).pathname)}</a>)` : ''} and use its <b>Code</b> / <b>Copy</b> button to copy the component’s code (React / TSX / JSX).</li>
         <li>Paste it here — Reskin runs it, with its packages (motion, gsap, three…), and it replaces this snapshot everywhere it’s used.</li></ol>
         <div class="bx-row">${fz.from ? `<button class="ghost" id="fzOpen">Open its page ↗</button>` : ''}<button class="primary" id="fzPaste">Paste its code</button></div>
-        <textarea id="fzCode" hidden spellcheck="false" placeholder="Paste the component’s code here (TSX / JSX, or HTML with its CSS)"></textarea>
+        <textarea id="fzCode" hidden spellcheck="false" placeholder="Paste the component’s code here — one file, or all its files at once (21st.dev’s “Copy all files”). TSX / JSX, or HTML with its CSS."></textarea>
         <div class="bx-row" id="fzRow" hidden><button class="primary" id="fzSave">Replace the snapshot with this code</button><span class="found" id="fzMsg"></span></div></div>`);
       if ($('fzOpen')) $('fzOpen').onclick = () => window.open(fz.from, '_blank', 'noopener');
       $('fzPaste').onclick = () => { $('fzCode').hidden = false; $('fzRow').hidden = false; $('fzCode').focus(); };
       $('fzSave').onclick = async () => {
-        const code = $('fzCode').value.trim(); if (!code) return toast('Paste the code first');
+        const code = mergePastedFiles($('fzCode').value.trim()); if (!code.trim()) return toast('Paste the code first');
         const kind = detectKind(code);
         $('fzMsg').textContent = 'Checking it runs…';
         try {
@@ -520,6 +520,12 @@ function parseProps(c) {
 // the props a component shows with: what its own code passes in its demo, then its Library settings, then this placement's
 function mountFor(c, extra) {
   const P = parseProps(c); if (!P || (!P.fields.length && !P.kids)) return null;
+  // it came with its own demo (21st.dev's "Copy all files", a Usage file): show that, the way its author meant it,
+  // until you change one of its settings
+  if (!extra && !(c.props && Object.keys(c.props).length) && P.main) {
+    const code = splitBundle(c.code).js, d = (/export\s+default\s+(?:function\s+)?([A-Z]\w*)/.exec(code) || [])[1];
+    if (d && d !== P.main && new RegExp('<' + P.main + '\\b').test(code)) return null;
+  }
   const props = { ...P.seed, ...(c.props || {}), ...(extra || {}) };
   // required settings with no value would crash it or leave it blank: fill them from their types (a list of links
   // gets your site's own menu), else by kind — never by component
