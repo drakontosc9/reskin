@@ -299,6 +299,33 @@ function __rkElem(D) {
   }, true);
   // in the editor, double-click any words in the component to type over them, just like the page's own words
   var tipEl = null;
+  // press and hold the component (mouse or pen) to pick it up and move it. Never on its own controls — anything you
+  // press, type in, drag or scrub keeps working — and never on touch, where a long press selects text.
+  if (D.edit) {
+    var HOLD = null, swallow = false;
+    var CONTROL = 'input,textarea,select,button,a[href],label,summary,[contenteditable],[draggable="true"],[role=slider],[role=scrollbar],[role=button],[role=tab],[role=link],[tabindex]:not([tabindex="-1"]),canvas,video,audio,iframe';
+    var say = function (k, e) { parent.postMessage({ rkHold: { id: D.id, phase: k, x: e.clientX, y: e.clientY } }, '*'); };
+    document.addEventListener('pointerdown', function (e) {
+      if (e.pointerType === 'touch' || e.button !== 0 || PICK || WORDS || wEl) return;
+      var t = e.target; if (!t || !t.closest || t.closest(CONTROL)) return;
+      if (/^(grab|grabbing|move|pointer|col-resize|row-resize|ew-resize|ns-resize|crosshair)$/.test(getComputedStyle(t).cursor)) return;
+      var x0 = e.clientX, y0 = e.clientY;
+      HOLD = { on: false, t: setTimeout(function () { if (!HOLD) return; HOLD.on = true; swallow = true; say('start', { clientX: x0, clientY: y0 }); }, 450), x0: x0, y0: y0 };
+    }, true);
+    document.addEventListener('pointermove', function (e) {
+      if (!HOLD) return;
+      if (!HOLD.on) { if (Math.abs(e.clientX - HOLD.x0) + Math.abs(e.clientY - HOLD.y0) > 6) { clearTimeout(HOLD.t); HOLD = null; } return; }
+      e.preventDefault(); say('move', e);
+    }, true);
+    document.addEventListener('pointerup', function (e) {
+      if (!HOLD) return; clearTimeout(HOLD.t);
+      if (HOLD.on) { e.preventDefault(); e.stopPropagation(); say('end', e); }
+      HOLD = null;
+    }, true);
+    document.addEventListener('click', function (e) { if (swallow) { swallow = false; e.preventDefault(); e.stopPropagation(); } }, true);
+    document.addEventListener('keydown', function (e) { if (HOLD && HOLD.on && e.key === 'Escape') { clearTimeout(HOLD.t); HOLD = null; swallow = false; parent.postMessage({ rkHold: { id: D.id, phase: 'cancel' } }, '*'); } }, true);
+    document.addEventListener('selectstart', function (e) { if (HOLD && HOLD.on) e.preventDefault(); }, true);
+  }
   if (D.edit) {
     document.addEventListener('dblclick', function (e) {
       if (PICK || WORDS) return; var el = wordsAt(e.target); if (!el || el === wEl) return;
@@ -567,7 +594,7 @@ function __rkStudio(EDITS, MODE) {
         // the site's navigation, replaced: the bar takes its place (and stays at the top if the old one did)
         var nr = el.getBoundingClientRect(), pos = getComputedStyle(el).position;
         var side = el.matches('aside.side') && el.parentElement.classList.contains('shell');   // a sidebar layout: the bar goes on top
-        tile.style.cssText = 'width:100%;height:' + Math.max(48, Math.round(side ? 64 : nr.height)) + 'px' + (side || pos === 'sticky' || pos === 'fixed' ? ';position:sticky;top:0' : '');
+        tile.style.cssText = 'width:100%;height:' + Math.max(40, Math.round(L.h || (side ? 64 : nr.height))) + 'px' + (side || pos === 'sticky' || pos === 'fixed' ? ';position:sticky;top:0' : '');
         if (side) { el.parentElement.style.gridTemplateColumns = 'minmax(0,1fr)'; el.parentElement.parentNode.insertBefore(tile, el.parentElement); }
         else el.parentNode.insertBefore(tile, el);
         el.style.display = 'none';
@@ -575,7 +602,8 @@ function __rkStudio(EDITS, MODE) {
         return;
       }
       if (L.flow) {
-        setSize(tile, L.size === 'auto' ? (L.row ? 'full' : 'big') : L.size);
+        if (L.size === 'custom' && L.cols) { tile.className += ' rk-c' + L.cols + ' rk-r' + (L.rows || 1); tile.style.setProperty('--rkc', L.cols); }   // resized by hand
+        else setSize(tile, L.size === 'auto' ? (L.row ? 'full' : 'big') : L.size);
         var spot = bentoSpot(el, e);
         spot.box.insertBefore(tile, spot.before && spot.before.parentNode === spot.box ? spot.before : null);
       } else {
@@ -661,7 +689,7 @@ function __rkStudio(EDITS, MODE) {
     '.rk-bento>.rk-r1{grid-row:span 1}.rk-bento>.rk-r2{grid-row:span 2}.rk-bento>.rk-r3{grid-row:span 3}.rk-bento>.rk-r4{grid-row:span 4}' +
     '@media (max-width:900px){.rk-bento{grid-template-columns:repeat(2,minmax(0,1fr))!important}}' +
     '@media (max-width:900px){.rk-bento>.rk-tile.rk-center{width:calc(min(var(--rkc,2),2) * (100% - 20px) / 2 + (min(var(--rkc,2),2) - 1) * 20px)}}' +
-    '@media (max-width:560px){.rk-bento{grid-template-columns:1fr!important}.rk-bento>.rk-c2{grid-column:1/-1}.rk-bento>.rk-tile.rk-center{width:100%}}' +
+    '@media (max-width:560px){.rk-bento{grid-template-columns:1fr!important}.rk-bento>.rk-c2,.rk-bento>.rk-c3{grid-column:1/-1}.rk-bento>.rk-tile.rk-center{width:100%}}' +
     '.rk-pop-bg{position:fixed;inset:0;z-index:2147483000;background:rgba(15,14,13,.55);display:grid;place-items:center;padding:16px;animation:rkFade .2s ease}' +
     '.rk-pop-box{position:relative;width:min(560px,100%);background:#fff;border-radius:16px;box-shadow:0 30px 80px rgba(0,0,0,.35);overflow:hidden}' +
     '.rk-pop-in{position:relative;width:100%;height:min(520px,80vh);overflow:hidden}' +
@@ -694,10 +722,20 @@ function __rkStudio(EDITS, MODE) {
     '.rk-bar{position:fixed;z-index:2147483004;display:none;gap:2px;padding:4px;background:#1d1b19;border-radius:11px;box-shadow:0 10px 28px rgba(0,0,0,.32)}' +
     '.rk-bar button{border:0;background:none;color:#fff;font:600 12px/1 Inter,system-ui,sans-serif;padding:8px 10px;border-radius:8px;cursor:pointer;white-space:nowrap}.rk-bar button:hover{background:rgba(255,255,255,.15)}' +
     '.rk-hl{outline:2px dashed rgba(47,107,255,.55)!important;outline-offset:4px}' +
-    '.rk-tag{position:fixed;z-index:2147483001;pointer-events:none;font:600 11.5px/1 Inter,system-ui,sans-serif;background:#1d1b19;color:#fff;padding:5px 8px;border-radius:6px;display:none}';
+    '.rk-tag{position:fixed;z-index:2147483001;pointer-events:none;font:600 11.5px/1 Inter,system-ui,sans-serif;background:#1d1b19;color:#fff;padding:5px 8px;border-radius:6px;display:none}' +
+    // moving: the lifted component fades and lets the pointer through; the tag says what letting go will do
+    '.rk-lifted{opacity:.35!important;pointer-events:none!important;outline:2px dashed #2f6bff!important;outline-offset:3px}.rk-mvtag{z-index:2147483005;background:#2f6bff}' +
+    'body.rk-moving,body.rk-moving *{cursor:grabbing!important;user-select:none!important}.rk-bar .rk-grip{cursor:grab}' +
+    // the resize corner (or edge, for a row's width / a bar's height)
+    '.rk-rs{position:fixed;z-index:2147483004;display:none;width:28px;height:28px;border-radius:9px;background:#1d1b19;box-shadow:0 6px 18px rgba(0,0,0,.3);touch-action:none}' +
+    '.rk-rs::after{content:"";position:absolute;inset:8px;border-right:2.5px solid #fff;border-bottom:2.5px solid #fff;border-radius:0 0 3px 0}' +
+    '.rk-rs-grid{cursor:nwse-resize}.rk-rs-w{cursor:ew-resize}.rk-rs-w::after{inset:7px 12px;border-bottom:0;border-left:2.5px solid #fff;border-radius:0}.rk-rs-h{cursor:ns-resize}.rk-rs-h::after{inset:12px 7px;border-right:0;border-top:2.5px solid #fff;border-radius:0}' +
+    '.rk-bento>.rk-c3{grid-column:span 3}';
   document.head.appendChild(sst);
   var ol = mk('rk-ol'), line = mk('rk-line'), pill = mk('rk-pill'), bar = mk('rk-bar'), tag = mk('rk-tag');
   setTimeout(function () { parent.postMessage({ rkReady: true }, '*'); }, 0);
+  // where you are on the page, so a re-render (a move, a resize, a new style) puts you back there
+  var scT = null; addEventListener('scroll', function () { clearTimeout(scT); scT = setTimeout(function () { parent.postMessage({ rkScrollAt: Math.round(scrollY) }, '*'); }, 150); }, { passive: true });
   function plain(t) { return t ? { addr: t.addr || null, info: t.info || null, editId: t.editId || null } : null; }
   function blocksOnPage() { return Array.prototype.filter.call(document.querySelectorAll('.rk-block'), function (b) { return b.offsetHeight > 0; }); }
   var clicky = function (k) { return k === 'button' || k === 'link'; };
@@ -772,7 +810,7 @@ function __rkStudio(EDITS, MODE) {
 
   // ---- a small toolbar on whatever component you point at
   var barFor = null, barT = null;
-  function hideBar() { bar.style.display = 'none'; barFor = null; document.querySelectorAll('.rk-hl').forEach(function (x) { x.classList.remove('rk-hl'); }); }
+  function hideBar() { bar.style.display = 'none'; barFor = null; if (typeof rs !== 'undefined' && !RS) rs.style.display = 'none'; document.querySelectorAll('.rk-hl').forEach(function (x) { x.classList.remove('rk-hl'); }); }
   function boxOf(node) {
     if (!node || !node.closest) return null;
     var e = node.closest('[data-rk-edit]'); if (e && e.querySelector('iframe')) return { el: e, editId: e.getAttribute('data-rk-edit') };
@@ -783,23 +821,114 @@ function __rkStudio(EDITS, MODE) {
     if (barFor && barFor.el === bx.el) return;
     hideBar(); barFor = bx; bx.el.classList.add('rk-hl');
     var tile = bx.editId && bx.el.classList.contains('rk-tile') && !bx.el.classList.contains('rk-navbar');
-    bar.innerHTML = (tile ? '<button data-a="size" title="Change its size">⤢ Size</button>' : '') + (bx.editId && !bx.el.classList.contains('rk-navbar') ? '<button data-a="place" title="Centre it, or make it its own section">⊞ Place</button>' : '') + '<button data-a="swap" title="Drag another component onto it, or pick one">⇄ Swap</button><button data-a="remove" title="Take it off the page">✕ Remove</button>';
+    bar.innerHTML = (bx.editId ? '<button data-a="move" class="rk-grip" title="Move it: drag to a new spot (or press and hold the component itself) · Esc cancels">✥ Move</button>' : '') + (tile ? '<button data-a="size" title="Change its size">⤢ Size</button>' : '') + (bx.editId && !bx.el.classList.contains('rk-navbar') ? '<button data-a="place" title="Centre it, or make it its own section">⊞ Place</button>' : '') + '<button data-a="swap" title="Drag another component onto it, or pick one">⇄ Swap</button><button data-a="remove" title="Take it off the page">✕ Remove</button>';
     var r = bx.el.getBoundingClientRect();
     bar.style.display = 'flex'; bar.style.left = Math.max(6, Math.min(r.right - bar.offsetWidth - 6, innerWidth - bar.offsetWidth - 6)) + 'px'; bar.style.top = Math.max(6, r.top + 8) + 'px';
+    if (bx.editId) placeRs(bx.el);
   }
   document.addEventListener('mouseover', function (ev) {
     if (document.body.classList.contains('rk-dragging') || document.querySelector('.rk-wording')) return;
-    if (bar.contains(ev.target)) { clearTimeout(barT); return; }
+    if (bar.contains(ev.target) || ev.target === rs) { clearTimeout(barT); return; }
     var bx = boxOf(ev.target);
     if (bx) { clearTimeout(barT); showBar(bx); } else { clearTimeout(barT); barT = setTimeout(hideBar, 350); }
   });
-  addEventListener('scroll', function () { if (barFor) { var r = barFor.el.getBoundingClientRect(); bar.style.top = Math.max(6, r.top + 8) + 'px'; } }, { passive: true });
+  addEventListener('scroll', function () { if (barFor) { var r = barFor.el.getBoundingClientRect(); bar.style.top = Math.max(6, r.top + 8) + 'px'; if (barFor.editId) placeRs(barFor.el); } }, { passive: true });
   bar.addEventListener('click', function (ev) {
-    var b = ev.target.closest('button'); if (!b || !barFor) return;
+    var b = ev.target.closest('button'); if (!b || !barFor || b.getAttribute('data-a') === 'move') return;
     var br = b.getBoundingClientRect();
     parent.postMessage({ rkTool: { action: b.getAttribute('data-a'), editId: barFor.editId || null, blockId: barFor.blockId || null, x: br.left, y: br.bottom + 4 } }, '*');
     hideBar();
   });
+
+  // ---- move a placed component: the ✥ Move grip, or press and hold the component (its frame tells us). It's lifted,
+  //      the page shows the same drop spots as a drag, and it lands where you let go. Esc puts it back.
+  var MV = null;
+  var mvTag = mk('rk-tag rk-mvtag');
+  function moveStart(id, x, y) {
+    var el = document.querySelector('[data-rk-edit="' + id + '"]'); if (!el || MV) return;
+    hideBar(); MV = { id: id, el: el, it: null };
+    document.body.classList.add('rk-dragging', 'rk-moving'); el.classList.add('rk-lifted');
+    moveTo(x, y);
+  }
+  function moveTo(x, y) {
+    if (!MV) return;
+    // near the top or bottom of the page view: keep scrolling that way, so anywhere on the page can be reached
+    MV.x = x; MV.y = y; var edge = Math.min(70, innerHeight * 0.12);
+    MV.dy = y < edge ? -Math.ceil((edge - y) / 4) : y > innerHeight - edge ? Math.ceil((y - innerHeight + edge) / 4) : 0;
+    if (MV.dy && !MV.iv) MV.iv = setInterval(function () { if (!MV || !MV.dy) return; scrollBy(0, MV.dy); var mx = MV.x, my = MV.y; MV.dy = 0; moveTo(mx, my); }, 30);
+    var it = intentAt(x, y, document.elementFromPoint(x, y));
+    // never onto itself, or beside something that sits beside it
+    if (it && (it.editId === MV.id || (it.el && (MV.el.contains(it.el) || it.el.contains(MV.el))))) it = null;
+    MV.it = it; showDrop(it);
+    mvTag.textContent = it ? (it.kind === 'gap' ? 'Move it here' : it.kind === 'swap' ? 'Trade places with it' : it.label) : 'Move it… (Esc puts it back)';
+    mvTag.style.display = 'block'; mvTag.style.left = Math.min(x + 16, innerWidth - mvTag.offsetWidth - 8) + 'px'; mvTag.style.top = Math.max(y - 34, 6) + 'px';
+  }
+  function moveDone(keep) {
+    if (!MV) return; var m = MV; MV = null; clearInterval(m.iv);
+    document.body.classList.remove('rk-dragging', 'rk-moving'); m.el.classList.remove('rk-lifted'); hideDrop(); mvTag.style.display = 'none';
+    if (keep && m.it) parent.postMessage({ rkMove: { editId: m.id, drop: { kind: m.it.kind, addr: m.it.addr || null, info: m.it.info || null, editId: m.it.editId || null, scope: m.it.scope || null, side: m.it.side || null } } }, '*');
+  }
+  bar.addEventListener('pointerdown', function (ev) {
+    var b = ev.target.closest('[data-a="move"]'); if (!b || !barFor || !barFor.editId) return;
+    ev.preventDefault(); moveStart(barFor.editId, ev.clientX, ev.clientY);
+  });
+  document.addEventListener('pointermove', function (ev) { if (MV) moveTo(ev.clientX, ev.clientY); if (RS) resizeTo(ev.clientX, ev.clientY); });
+  document.addEventListener('pointerup', function () { if (MV) moveDone(true); if (RS) resizeDone(true); });
+  document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape' && (MV || RS)) { ev.preventDefault(); if (MV) moveDone(false); if (RS) resizeDone(false); } }, true);
+  // a hold inside a component: only from that component's own frame, in that frame's coordinates
+  function fromFrame(ev, id) {
+    var f = document.querySelector('iframe[data-rke="' + id + '"]'); if (!f || f.contentWindow !== ev.source) return null;
+    var r = f.getBoundingClientRect(), sx = f.offsetWidth ? r.width / f.offsetWidth : 1, sy = f.offsetHeight ? r.height / f.offsetHeight : 1;
+    return function (x, y) { return [r.left + x * sx, r.top + y * sy]; };
+  }
+
+  // ---- resize a placed component with its corner: a tile in the grid snaps to columns and rows (like the Size
+  //      presets, so phones still stack it); an item beside a navbar changes its width; a navbar row its height
+  var rs = mk('rk-rs'), RS = null;
+  rs.title = 'Drag to resize · Size → Auto puts it back';
+  function rsKind(el) {
+    if (!el.classList.contains('rk-tile')) return null;
+    if (el.classList.contains('rk-beside')) return 'w';
+    if (el.classList.contains('rk-navbar')) return 'h';
+    if (el.parentElement && el.parentElement.classList.contains('rk-bento')) return 'grid';
+    return null;
+  }
+  function placeRs(el) {
+    var k = rsKind(el); if (!k) { rs.style.display = 'none'; return; }
+    var r = el.getBoundingClientRect();
+    rs.className = 'rk-rs rk-rs-' + k; rs.style.display = 'block';
+    rs.style.left = (k === 'h' ? r.left + r.width / 2 - 14 : r.right - 14) + 'px'; rs.style.top = (k === 'w' ? r.top + r.height / 2 - 14 : r.bottom - 14) + 'px';
+  }
+  var rsLast = null;
+  rs.addEventListener('dblclick', function (ev) { ev.preventDefault(); if (rsLast) parent.postMessage({ rkResize: { editId: rsLast, reset: true } }, '*'); });
+  rs.addEventListener('pointerdown', function (ev) {
+    if (!barFor || !barFor.editId) return; ev.preventDefault();
+    var el = barFor.el, r = el.getBoundingClientRect(), k = rsKind(el); if (!k) return;
+    rsLast = barFor.editId;
+    RS = { id: barFor.editId, el: el, k: k, x0: ev.clientX, y0: ev.clientY, w0: r.width, h0: r.height, was: el.getAttribute('style') || '', cls: el.className };
+    hideBar(); rs.style.display = 'block'; document.body.classList.add('rk-dragging');
+  });
+  function gridOf(el) {
+    var g = el.parentElement, cs = getComputedStyle(g), cols = cs.gridTemplateColumns.split(' ').length || 4, gap = parseFloat(cs.columnGap) || 20;
+    return { cols: cols, colW: (g.clientWidth - gap * (cols - 1)) / cols, gap: gap, rowH: 170 };
+  }
+  function resizeTo(x, y) {
+    var s = RS, dx = x - s.x0, dy = y - s.y0, txt;
+    if (s.k === 'grid') {
+      var g = gridOf(s.el), c = Math.max(1, Math.min(g.cols, Math.round((s.w0 + dx + g.gap) / (g.colW + g.gap)))), rws = Math.max(1, Math.min(4, Math.round((s.h0 + dy) / g.rowH)));
+      s.el.className = s.el.className.replace(/\brk-[cr]\d\b/g, '').trim() + ' rk-c' + c + ' rk-r' + rws; s.cols = c; s.rows = rws;
+      txt = c + (c > 1 ? ' columns' : ' column') + ' × ' + rws + (rws > 1 ? ' rows' : ' row');
+    } else if (s.k === 'w') { s.w = Math.max(160, Math.round(s.w0 + dx)); s.el.style.flex = '0 1 ' + s.w + 'px'; txt = s.w + ' px wide'; }
+    else { s.h = Math.max(40, Math.round(s.h0 + dy)); s.el.style.height = s.h + 'px'; Array.prototype.forEach.call((s.el.parentElement.classList.contains('rk-pair') ? s.el.parentElement : s.el).querySelectorAll('.rk-beside'), function (b) { b.style.height = s.h + 'px'; }); txt = s.h + ' px tall'; }
+    var r = s.el.getBoundingClientRect();
+    mvTag.textContent = txt; mvTag.style.display = 'block'; mvTag.style.left = Math.min(r.right - mvTag.offsetWidth, innerWidth - mvTag.offsetWidth - 8) + 'px'; mvTag.style.top = Math.min(r.bottom + 8, innerHeight - 30) + 'px';
+    placeRs(s.el);
+  }
+  function resizeDone(keep) {
+    var s = RS; RS = null; document.body.classList.remove('rk-dragging'); mvTag.style.display = 'none'; rs.style.display = 'none';
+    if (!keep || (s.cols == null && s.w == null && s.h == null)) { s.el.className = s.cls; s.el.setAttribute('style', s.was); if (keep) placeRs(s.el); return; }   // a click, not a drag: the handle stays (a double-click resets)
+    parent.postMessage({ rkResize: { editId: s.id, cols: s.cols || null, rows: s.rows || null, w: s.w || null, h: s.h || null } }, '*');
+  }
 
   // ---- words: double-click to type them; right-click for the few things you might want
   var editing = null, before = '';
@@ -848,6 +977,13 @@ function __rkStudio(EDITS, MODE) {
   addEventListener('message', function (ev) {
     var d = ev.data || {};
     if ('rkDragging' in d) dragging(d.rkDragging);
+    if (d.rkHold && d.rkHold.id) {
+      var h = d.rkHold, at = fromFrame(ev, h.id); if (!at) return;
+      if (h.phase === 'start') { var p0 = at(h.x, h.y); moveStart(h.id, p0[0], p0[1]); }
+      else if (h.phase === 'move' && MV) { var p1 = at(h.x, h.y); moveTo(p1[0], p1[1]); }
+      else if (h.phase === 'end' && MV) { var p2 = at(h.x, h.y); moveTo(p2[0], p2[1]); moveDone(true); }
+      else if (h.phase === 'cancel') moveDone(false);
+    }
     if ('rkNavish' in d) NAVISH = !!d.rkNavish;
     // carried in from the Library: the app sends where the pointer is; show where it would land, and drop it there
     if ('rkCarry' in d) {
@@ -860,6 +996,8 @@ function __rkStudio(EDITS, MODE) {
       parent.postMessage({ rkDrop: it ? { kind: it.kind, addr: it.addr || null, info: it.info || null, editId: it.editId || null, scope: it.scope || null, side: it.side || null } : null, carried: true }, '*');
     }
     if (d.rkScrollBy) scrollBy(0, d.rkScrollBy);
+    // back where you were: the page may still be growing (fonts, components loading), so keep trying for a moment
+    if (d.rkScrollTo != null) { var sy = d.rkScrollTo, tries = 0; (function go() { scrollTo({ top: sy, behavior: 'instant' }); if (Math.abs(scrollY - sy) > 4 && tries++ < 30) setTimeout(go, 100); })(); }
     if (d.rkEditText) { var te = find(d.rkEditText); if (te) startText(te, d.rkEditText); }
     if ('rkHi' in d) {
       var el = null, h = d.rkHi;
@@ -1235,6 +1373,64 @@ function removeComp(id) {
     redraw();
   });
 }
+/* ---- move and resize what's on your page ----
+   Moving changes where the component sits, never what it is: same edit (so its settings, words, links and anything
+   beside it come along), new place. Dropped on another component, the two trade places. One Undo. */
+const PLACE_KEYS = ['target', 'mode', 'layout', 'besideOf', 'side', 'targetLabel', 'targetHref', 'text', 'action'];
+function orderEdits(list) {   // something beside another comes after it, so the page can draw them in order
+  const out = [], seen = new Set(); let rest = list.slice(), guard = 0;
+  while (rest.length && guard++ < 60) {
+    const next = [];
+    rest.forEach(e => { if (!e.besideOf || seen.has(e.besideOf) || !list.some(x => x.id === e.besideOf)) { out.push(e); seen.add(e.id); } else next.push(e); });
+    if (next.length === rest.length) { out.push(...next); break; }
+    rest = next;
+  }
+  return out;
+}
+function moveEdit(id, it) {
+  const e = editById(id); if (!e || !it) return;
+  const snap = snapshotPage(), name = (compById(e.compId) || {}).name || 'it';
+  const sitsBeside = (eid, other) => { for (let x = editById(eid), n = 0; x && n < 20; x = x.besideOf && editById(x.besideOf), n++) if (x.id === other) return true; return false; };
+  let msg;
+  if (it.kind === 'swap') {
+    const o = editById(it.editId); if (!o || o.id === e.id) return;
+    PLACE_KEYS.forEach(k => { const t = e[k]; e[k] = o[k]; o[k] = t; });
+    if (e.besideOf === e.id) e.besideOf = o.id; if (o.besideOf === o.id) o.besideOf = e.id;   // they were side by side
+    msg = `“${name}” and “${(compById(o.compId) || {}).name || 'it'}” traded places`;
+  } else {
+    if (it.kind === 'beside' && sitsBeside(it.editId, e.id)) { toast('It can’t go beside something that sits beside it'); return; }
+    const size = e.layout && !e.layout.bar ? { size: e.layout.size || 'auto', cols: e.layout.cols, rows: e.layout.rows } : { size: 'auto' };
+    const keepAction = e.action && e.action.type !== 'keep' ? e.action : null;
+    delete e.besideOf; delete e.side; e.text = null; e.action = keepAction; delete e.targetHref;
+    if (it.kind === 'replace') {
+      const href = it.info && it.info.href && it.info.href.replace(/^about:srcdoc/, '');
+      Object.assign(e, { target: it.addr, mode: 'replace', targetLabel: (it.info && it.info.label) || '', targetHref: href || '', text: (it.info && it.info.label) || null });
+      if (!keepAction && href && href !== '#') e.action = { type: 'keep', href };
+      msg = `Moved “${name}” into “${((it.info && it.info.label) || 'the button').slice(0, 30)}”’s place`;
+    } else if (it.kind === 'here') { Object.assign(e, { target: it.addr, mode: 'after', targetLabel: (it.info && it.info.label) || '', layout: { flow: true, ...size } }); msg = `Moved “${name}”`; }
+    else if (it.kind === 'gap') { Object.assign(e, { target: { scope: it.scope, kind: 'section', idx: 0 }, mode: 'after', targetLabel: blockLabel(it.scope), layout: { flow: true, ...size, row: true } }); msg = `Moved “${name}” to its own section`; }
+    else if (it.kind === 'beside') {
+      const a = editById(it.editId); if (!a) return;
+      Object.assign(e, { target: a.target, mode: 'beside', besideOf: a.id, side: it.side === 'left' ? 'left' : 'right', targetLabel: `beside “${(compById(a.compId) || {}).name || 'it'}”`, layout: { bar: !!(a.layout && a.layout.bar) } });
+      msg = `Moved “${name}” beside “${(compById(a.compId) || {}).name || 'it'}”`;
+    } else if (it.kind === 'nav') { Object.assign(e, { target: { scope: 'nav', kind: 'section', idx: 0 }, mode: 'replace', targetLabel: 'your navigation', layout: { bar: true } }); msg = `“${name}” is your navigation now`; }
+    else { toast('It can’t go there — try next to something, between two sections, or on a button'); return; }
+    // newly placed things go last among their neighbours, like a fresh drop
+    B.project.edits = projectEdits().filter(x => x !== e).concat(e);
+  }
+  B.project.edits = orderEdits(projectEdits());
+  saveProject(); renderEditorWs(); toastUndo(msg, snap);
+}
+function resizeEdit(r) {
+  const e = editById(r.editId); if (!e) return;
+  const snap = snapshotPage(), L = e.layout || (e.layout = { flow: true, size: 'auto' });
+  let msg = 'Resized';
+  if (r.reset) { if (L.size === 'custom') L.size = 'auto'; delete L.cols; delete L.rows; delete L.h; delete e.width; msg = 'Back to its automatic size'; }
+  else if (r.cols) { Object.assign(L, { flow: true, size: 'custom', cols: r.cols, rows: r.rows || 1 }); msg = `Resized to ${r.cols} × ${r.rows || 1}`; }
+  else if (r.w) { e.width = r.w; msg = `${r.w} px wide`; }
+  else if (r.h) { L.h = r.h; msg = `${r.h} px tall`; }
+  saveProject(); renderStudioPreview(); toastUndo(msg, snap);
+}
 // an edit gone, and whatever sat beside it (a search bar next to a navbar you removed)
 function withoutEdit(list, id) {
   const gone = new Set([id]); let grew = true;
@@ -1402,11 +1598,15 @@ addEventListener('message', e => {
   const d = e.data || {};
   if (state.view !== 'studio' || !$('stFrame')) return;
   const f = $('stFrame').querySelector('iframe'); if (!f || e.source !== f.contentWindow) return;
+  if ('rkScrollAt' in d) { S.scrollAt = d.rkScrollAt; S.scrollFor = B.project && B.project.id; return; }
   if (d.rkReady && S.reveal) { stPost({ rkHi: { editId: S.reveal }, scroll: true }); S.reveal = null; }
+  else if (d.rkReady && S.scrollAt && B.project && S.scrollFor === B.project.id) stPost({ rkScrollTo: S.scrollAt });   // back where you were
   if (d.rkReady) {   // a fresh stage (after a tab switch or a re-render): pick up where the carry is
     if (CARRY.id) { CARRY.ready = true; stPost({ rkNavish: isNavish(compById(CARRY.id)) }); if (CARRY.drop) stPost({ rkCarryDrop: CARRY.drop }); else if (CARRY.at) stPost({ rkCarry: CARRY.at }); }
     return;
   }
+  if (d.rkMove) { moveEdit(d.rkMove.editId, d.rkMove.drop); return; }
+  if (d.rkResize) { resizeEdit(d.rkResize); return; }
   if ('rkDrop' in d) {
     const it = d.rkDrop; let compId = S.drag; S.drag = null;
     if (d.carried) { endCarry(); if (!it) { toast('Drop it on a button, next to something, or between two sections'); return; } }
