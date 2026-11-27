@@ -1167,6 +1167,7 @@ function stToolbar() {
       <div class="seg" id="stDev"><button data-d="desktop" class="${S.device === 'desktop' ? 'on' : ''}">Desktop</button><button data-d="mobile" class="${S.device === 'mobile' ? 'on' : ''}">Mobile</button></div>
       <button class="icon st-gear" id="stGear" title="Page settings: colours, hero, images">⚙</button>
       <button class="ghost" id="stOpen">Open full page</button>
+      <button class="st-save quiet" id="stSave" type="button">✓ Saved</button>
       <button class="primary" id="stDl" style="height:34px;padding:0 12px;font-size:13px">Download site</button>
     </div></div>`;
 }
@@ -1178,6 +1179,7 @@ function wireStToolbar() {
     const fr = $('stFrame'); if (fr) fr.className = 'bx-frame ' + S.device;
   };
   $('stGear').onclick = () => openGear();
+  paintSave(false); $('stSave').onclick = () => { if (SAVE.state === 'ok') toast('Your page is saved in this browser'); else $('stDl').click(); };
   $('stOpen').onclick = () => {
     state.current = { ...p.style, name: p.name, label: 'Your built page', id: 'built-' + p.id, _built: true };
     $('mName').textContent = p.name; $('mInfo').textContent = 'Your page · buttons work like on the real site';
@@ -1377,23 +1379,20 @@ function renderEditorWs() {
 /* ---- placing: what you drop lands where the page showed it would, with sensible defaults; Undo is one click ---- */
 const snapshotPage = () => JSON.stringify({ edits: B.project.edits || [], blocks: B.project.blocks, btnCss: B.project.btnCss || '', btnFrom: B.project.btnFrom || null });
 function restorePage(snap) { const o = JSON.parse(snap); Object.assign(B.project, o); saveProject(); renderEditorWs(); }
-function toastUndo(msg, snap, more) {
-  let t = $('undoToast'); if (!t) { t = document.createElement('div'); t.id = 'undoToast'; t.className = 'undo-toast'; document.body.appendChild(t); }
+// a message with Undo (and sometimes a quick follow-up like "Centre it"); opts.ms for how long it stays
+function toastUndo(msg, snap, more, opts) {
   more = (more || []).filter(x => x && x.run);
-  t.innerHTML = `<span>${esc(msg)}</span>${more.map((x, i) => `<button type="button" class="ut-more" data-i="${i}">${esc(x.short || x.label)}</button>`).join('')}<button type="button" class="ut-undo">Undo</button>`;
-  t.classList.add('show'); clearTimeout(toastUndo.t); toastUndo.t = setTimeout(() => t.classList.remove('show'), more.length ? 10000 : 6500);
-  t.querySelector('.ut-undo').onclick = () => { t.classList.remove('show'); typeof snap === 'function' ? snap() : restorePage(snap); toast('Undone'); };
-  t.querySelectorAll('.ut-more').forEach(b => b.onclick = () => { t.classList.remove('show'); more[+b.dataset.i].run(); });
+  return pushToast({ text: msg, more, ms: (opts && opts.ms) || (more.length ? 10000 : 8000), loud: !!(opts && opts.loud),
+    undo: () => { typeof snap === 'function' ? snap() : restorePage(snap); toast('Undone'); } });
 }
-// Remove a component from the Library. If it's on your page, say so first; it comes off the page too
-// (a component it replaced gives your own section back). Undo puts both back.
+// Remove a component from the Library. If it's on your page it comes off the page too (a component it replaced gives
+// your own section back). No "are you sure?": it happens at once, the message says exactly what went, Undo puts both back.
 function removeComp(id) {
   const at = comps.list.findIndex(x => x.id === id); if (at < 0) return;
   const c = comps.list[at], p = typeof B !== 'undefined' && B.project;
   const usesIt = e => e.compId === id || (e.action && e.action.compId === id);
   const edits = p ? (p.edits || []).filter(usesIt) : [], blocks = p ? (p.blocks || []).filter(b => b.kind === 'comp' && b.compId === id) : [];
   const n = edits.length + blocks.length;
-  if (n && !confirm(`“${c.name}” is on your page${n > 1 ? ` ${n} times` : ''}. Remove it from your Library and from your page?`)) return;
   const pageSnap = p ? snapshotPage() : null;
   comps.list.splice(at, 1);
   if (p && n) {
@@ -1406,11 +1405,11 @@ function removeComp(id) {
   if (typeof INS !== 'undefined' && INS.compId === id) Object.assign(INS, { compId: null, map: null, pick: null, sel: null });
   const redraw = () => { if (LIB.detail && !compById(LIB.detail)) LIB.detail = null; if (state.view === 'library') renderLibrary(); else renderComps(); if (n && typeof renderEditorWs === 'function') try { renderEditorWs(); } catch (e) {} };
   redraw();
-  toastUndo(`Removed “${c.name}”${n ? ' from your Library and your page' : ' from your Library'}`, () => {
+  toastUndo(`Removed “${c.name}” from your Library${n ? ` and your page${n > 1 ? ` (${n} places)` : ''}` : ''}`, () => {
     comps.list.splice(Math.min(at, comps.list.length), 0, c); comps.save();
     if (pageSnap) restorePage(pageSnap);
     redraw();
-  });
+  }, null, { ms: n ? 12000 : 8000, loud: true });
 }
 /* ---- move and resize what's on your page ----
    Moving changes where the component sits, never what it is: same edit (so its settings, words, links and anything

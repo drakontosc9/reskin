@@ -34,7 +34,48 @@ function viewModel() {
   return v;
 }
 
-function toast(msg, ms = 2200) { const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('show'), ms); }
+/* ---- messages: one stack at the bottom, newest last, at most 3. A second message never wipes out the first one's
+   Undo: plain messages leave first, and the timers wait while the pointer is over the stack. ---- */
+const TOASTS = { box: null, items: [], paused: false };
+function toastBox() {
+  if (TOASTS.box) return TOASTS.box;
+  const b = TOASTS.box = document.createElement('div'); b.className = 'toast-stack'; b.setAttribute('role', 'status'); b.setAttribute('aria-live', 'polite');
+  b.addEventListener('mouseenter', () => { TOASTS.paused = true; TOASTS.items.forEach(i => clearTimeout(i.t)); });
+  b.addEventListener('mouseleave', () => { TOASTS.paused = false; TOASTS.items.forEach(toastTimer); });
+  document.body.appendChild(b); return b;
+}
+function toastTimer(it) { clearTimeout(it.t); if (!TOASTS.paused) it.t = setTimeout(() => toastGone(it), it.ms); }
+function toastGone(it) {
+  const i = TOASTS.items.indexOf(it); if (i < 0) return; TOASTS.items.splice(i, 1); clearTimeout(it.t);
+  it.el.classList.remove('show'); it.el.classList.add('leaving'); setTimeout(() => it.el.remove(), 220);
+  if (it.undo) undoLabels();
+}
+// { text, ms, undo: fn, more: [{ label, short, run }], loud }  → the item (so it can be closed early)
+function pushToast(o) {
+  const box = toastBox(), plain = !o.undo && !(o.more && o.more.length);
+  // the same plain message again: one message that counts
+  const same = plain && TOASTS.items.find(i => i.plain && i.text === o.text);
+  if (same) { same.n++; same.el.querySelector('.tst-n').textContent = '×' + same.n; same.ms = o.ms || 2200; toastTimer(same); return same; }
+  const el = document.createElement('div'); el.className = 'tst' + (plain ? '' : ' tst-act');
+  if (o.loud) el.setAttribute('aria-live', 'assertive');
+  const more = (o.more || []).filter(x => x && x.run);
+  el.innerHTML = `<span class="tst-t">${esc(o.text)}</span><span class="tst-n"></span>${more.map((x, i) => `<button type="button" class="tst-more" data-i="${i}">${esc(x.short || x.label)}</button>`).join('')}${o.undo ? '<button type="button" class="tst-undo">Undo</button>' : ''}`;
+  const it = { el, text: o.text, plain, n: 1, ms: o.ms || (plain ? 2200 : 8000) };
+  // an older Undo also takes back what came after it: it says so, and the newer Undo messages go with it
+  if (o.undo) { it.undo = true; el.querySelector('.tst-undo').onclick = () => { TOASTS.items.slice(TOASTS.items.indexOf(it)).filter(i => i.undo).forEach(toastGone); o.undo(); }; }
+  el.querySelectorAll('.tst-more').forEach(b => b.onclick = () => { toastGone(it); more[+b.dataset.i].run(); });
+  box.appendChild(el); TOASTS.items.push(it); requestAnimationFrame(() => el.classList.add('show'));
+  // more than 3: the oldest plain message goes first; messages you can undo are the last to go
+  while (TOASTS.items.length > 3) toastGone(TOASTS.items.find(i => i.plain && i !== it) || TOASTS.items[0]);
+  undoLabels(); toastTimer(it); return it;
+}
+function undoLabels() {
+  const us = TOASTS.items.filter(i => i.undo);
+  us.forEach((u, k) => { const later = us.length - 1 - k, b = u.el.querySelector('.tst-undo'); if (!b) return;
+    b.textContent = later ? `Undo (+${later} later)` : 'Undo';
+    b.title = later ? `Also takes back the ${later} change${later > 1 ? 's' : ''} made after this one` : ''; });
+}
+function toast(msg, ms = 2200) { return pushToast({ text: msg, ms }); }
 function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
 function busy(msg) {
   const b = $('gen');

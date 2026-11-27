@@ -36,10 +36,32 @@ function saveProject() {
   B.project.updated = Date.now();
   const all = store.get('reskin.projects', []).filter(p => p.id !== B.project.id);
   all.unshift(B.project);
-  if (!store.set('reskin.projects', all.slice(0, 20))) toast('Browser storage is full — download your site to keep it');
+  const ok = store.set('reskin.projects', all.slice(0, 20));
   store.set('reskin.currentProject', B.project.id);
   if (window.Cloud) Cloud.saveProject(B.project);
+  setSaveState(!ok ? 'full' : storageUsed() > 4.2e6 ? 'almost' : 'ok');
+  return ok;
 }
+/* ---- is your work saved? A small pill beside "Download site" says so. When the browser stops keeping it, the pill
+   stays on a warning (click: download), and leaving the tab asks first — only then. ---- */
+const SAVE = { state: 'ok', t: 0 };
+function storageUsed() { let n = 0; try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); n += k.length + (localStorage.getItem(k) || '').length; } } catch {} return n; }   // characters; most browsers allow ~5 million
+function setSaveState(k) {
+  const was = SAVE.state; SAVE.state = k;
+  if (k === 'full' && was !== 'full') toast('Your browser isn’t keeping your work any more (storage is full) — download your site to keep it', 6000);
+  if (k !== 'full' && was === 'full') toast('Saved again');
+  paintSave(true);
+}
+function paintSave(fresh) {
+  const el = $('stSave'); if (!el) return;
+  const k = SAVE.state;
+  el.className = 'st-save' + (k === 'full' ? ' warn' : k === 'almost' ? ' near' : '');
+  el.textContent = k === 'full' ? '⚠ Not saved — storage is full' : k === 'almost' ? '✓ Saved · storage almost full' : '✓ Saved';
+  el.title = k === 'full' ? 'Your browser has no room left for this page. Click to download your site so nothing is lost.' : k === 'almost' ? 'Your browser’s storage is nearly full — download your site to keep a copy' : 'Your page is saved in this browser';
+  clearTimeout(SAVE.t);
+  if (k === 'ok') { if (!fresh) el.classList.add('quiet'); else SAVE.t = setTimeout(() => el.classList.add('quiet'), 1200); }
+}
+addEventListener('beforeunload', e => { if (SAVE.state === 'full') { e.preventDefault(); e.returnValue = ''; } });
 // the open project must match the site that's pasted in; otherwise start one for it
 function ensureProject() {
   const src = $('src').value;
@@ -260,7 +282,12 @@ function renderBuild() {
   $('bdNav').onchange = e => { p.hideNav = !e.target.checked; saveProject(); renderBuildPreview(); };
   $('bdFoot').onchange = e => { p.hideFooter = !e.target.checked; saveProject(); renderBuildPreview(); };
   $('bdAdd').onclick = () => startWizard({ after: B.sel });
-  $('bdReset').onclick = () => { if (confirm('Put the page back to just your site’s own sections? Added components are removed.')) { p.blocks = siteBlocks(state.model); p.edits = []; p.btnCss = ''; p.btnFrom = null; B.sel = null; B.wizard = null; saveProject(); renderBuild(); } };
+  // no "are you sure?": it resets at once and says what came off; Undo puts it all back
+  $('bdReset').onclick = () => {
+    const snap = snapshotPage(), n = (p.edits || []).filter(e => e.compId).length + (p.blocks || []).filter(b => b.kind === 'comp').length;
+    p.blocks = siteBlocks(state.model); p.edits = []; p.btnCss = ''; p.btnFrom = null; B.sel = null; B.wizard = null; saveProject(); renderBuild();
+    toastUndo(`Your page is back to your site’s own sections${n ? ` — ${n} component${n > 1 ? 's' : ''} came off` : ''}`, () => { Object.assign(p, JSON.parse(snap)); saveProject(); renderBuild(); }, null, { ms: 12000, loud: true });
+  };
   $('bdDl').onclick = () => {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([composeDoc({ preview: false })], { type: 'text/html' }));
