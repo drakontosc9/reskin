@@ -1,0 +1,16 @@
+/* pages (pages.js): the page bar under Studio's toolbar */
+.pg-bar{display:flex;align-items:center;gap:6px;padding:6px 12px;border-bottom:1px solid var(--line);min-width:0}
+.pg-tabs{display:flex;gap:4px;overflow-x:auto;min-width:0;scrollbar-width:thin}
+.pg-tab,.pg-add{font:inherit;font-size:12.5px;height:28px;padding:0 10px;border-radius:8px;border:1px solid transparent;background:transparent;color:var(--muted);cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;gap:6px}
+.pg-tab:hover,.pg-add:hover{background:var(--chip);color:var(--ink)}
+.pg-tab.on{background:var(--panel);border-color:var(--line);color:var(--ink);font-weight:600}
+.pg-tab.off small{font-weight:400;font-size:11px;opacity:.7}
+.pg-tab .pg-more{font-style:normal;opacity:.6;padding:0 2px}
+.pg-tab .pg-more:hover{opacity:1}
+.pg-tab:focus-visible,.pg-add:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.pg-add{color:var(--accent);flex:none}
+/* save a part (grab.js) */
+#mPick.on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.mpick-hint{background:var(--accent);color:var(--accent-ink);font-size:13px;padding:7px 14px;text-align:center}
+.mpick-hint kbd{font:inherit;font-size:11.5px;background:rgba(255,255,255,.22);border-radius:4px;padding:1px 5px}
+.tparts{margin-top:8px;font-size:12.5px;padding:6px 10px}

@@ -65,7 +65,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def log_message(self, fmt, *args):
-        if "/proxy" in (args[0] if args else ""):
+        if "/proxy" in (str(args[0]) if args else ""):   # errors pass an HTTPStatus here, not text
             super().log_message(fmt, *args)
 
 

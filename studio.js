@@ -1188,7 +1188,7 @@ function wireStToolbar() {
   };
   $('stDl').onclick = async () => {
     // components that run code fetch their packages when the page opens: fix today's versions so it keeps working the same
-    const used = [...new Set([...(p.edits || []).map(e => e.compId), ...p.blocks.filter(b => b.kind === 'comp').map(b => b.compId)])].map(compById).filter(c => c && c.kind === 'tsx');
+    const used = usedOnAllPages(p).filter(c => c.kind === 'tsx');   // every page's components
     let note = '';
     if (used.length) {
       toast('Fixing package versions…', 2000);
@@ -1196,11 +1196,8 @@ function wireStToolbar() {
       EXPORT_PINS = pins;
       note = ` · its components load React and their packages from the internet when the page opens${missed.length ? ` (couldn’t fix the version of ${missed.join(', ')} — check you’re online)` : ', versions fixed'}`;
     }
-    let html; try { html = composeDoc({ preview: false }); } finally { EXPORT_PINS = null; }
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
-    a.download = `${slug(p.name || 'site')}.html`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-    toast('Downloaded — this file is your whole site, with your changes' + note, note ? 7000 : 3000);
+    let what; try { what = downloadSite(p); } finally { EXPORT_PINS = null; }   // one page: one .html; several: a .zip (pages.js)
+    toast('Downloaded — ' + what + ', with your changes' + note, note ? 7000 : 3000);
   };
 }
 
@@ -1377,8 +1374,9 @@ function renderEditorWs() {
 }
 
 /* ---- placing: what you drop lands where the page showed it would, with sensible defaults; Undo is one click ---- */
-const snapshotPage = () => JSON.stringify({ edits: B.project.edits || [], blocks: B.project.blocks, btnCss: B.project.btnCss || '', btnFrom: B.project.btnFrom || null });
-function restorePage(snap) { const o = JSON.parse(snap); Object.assign(B.project, o); saveProject(); renderEditorWs(); }
+// _page: the page it was taken on (a project can have several, pages.js) — Undo goes back there first
+const snapshotPage = () => JSON.stringify({ edits: B.project.edits || [], blocks: B.project.blocks, btnCss: B.project.btnCss || '', btnFrom: B.project.btnFrom || null, _page: B.project.pageId || 'home' });
+function restorePage(snap) { const o = JSON.parse(snap), pg = o._page; delete o._page; if (pg && typeof loadPage === 'function' && pg !== (B.project.pageId || 'home')) loadPage(B.project, pg); Object.assign(B.project, o); saveProject(); renderEditorWs(); }
 // a message with Undo (and sometimes a quick follow-up like "Centre it"); opts.ms for how long it stays
 function toastUndo(msg, snap, more, opts) {
   more = (more || []).filter(x => x && x.run);
@@ -1391,23 +1389,29 @@ function removeComp(id) {
   const at = comps.list.findIndex(x => x.id === id); if (at < 0) return;
   const c = comps.list[at], p = typeof B !== 'undefined' && B.project;
   const usesIt = e => e.compId === id || (e.action && e.action.compId === id);
-  const edits = p ? (p.edits || []).filter(usesIt) : [], blocks = p ? (p.blocks || []).filter(b => b.kind === 'comp' && b.compId === id) : [];
-  const n = edits.length + blocks.length;
-  const pageSnap = p ? snapshotPage() : null;
-  comps.list.splice(at, 1);
-  if (p && n) {
+  // take it off the page that's loaded in p.edits / p.blocks; returns how many places it was
+  const strip = () => {
+    const blocks = (p.blocks || []).filter(b => b.kind === 'comp' && b.compId === id), k = (p.edits || []).filter(usesIt).length + blocks.length;
+    if (!k) return 0;
     p.edits = (p.edits || []).filter(e => !usesIt(e));
     let orphan; while ((orphan = p.edits.find(e => e.besideOf && !p.edits.some(x => x.id === e.besideOf)))) p.edits = withoutEdit(p.edits, orphan.id);   // what sat beside it goes too
-    blocks.forEach(b => { const i = p.blocks.indexOf(b); if (i >= 0) p.blocks.splice(i, 1, ...(b.replaces ? siteBlocks(state.model).filter(x => x.ref === b.replaces) : [])); });
-    saveProject();
-  }
+    blocks.forEach(b => { const i = p.blocks.indexOf(b); if (i >= 0) p.blocks.splice(i, 1, ...(b.replaces ? siteBlocks((typeof pageModel === 'function' ? pageModel() : state.model)).filter(x => x.ref === b.replaces) : [])); });
+    return k;
+  };
+  // several pages: every page loses it (each visited with loadPage, the one place pages change hands); Undo restores them all
+  const many = p && typeof loadPage === 'function' && p.pages && p.pages.length > 1;
+  const pageSnap = !p ? null : many ? pagesSnap(p) : snapshotPage();
+  comps.list.splice(at, 1);
+  let n = p ? strip() : 0, onPages = n ? 1 : 0;
+  if (many) { const back = curPageId(p); try { for (const pg of pagesOf(p)) if (pg.id !== back) { loadPage(p, pg.id); const k = strip(); n += k; if (k) onPages++; } } finally { loadPage(p, back); } }
+  if (p && n) saveProject();
   comps.save();
   if (typeof INS !== 'undefined' && INS.compId === id) Object.assign(INS, { compId: null, map: null, pick: null, sel: null });
   const redraw = () => { if (LIB.detail && !compById(LIB.detail)) LIB.detail = null; if (state.view === 'library') renderLibrary(); else renderComps(); if (n && typeof renderEditorWs === 'function') try { renderEditorWs(); } catch (e) {} };
   redraw();
-  toastUndo(`Removed “${c.name}” from your Library${n ? ` and your page${n > 1 ? ` (${n} places)` : ''}` : ''}`, () => {
+  toastUndo(`Removed “${c.name}” from your Library${n ? ` and your ${onPages > 1 ? `pages (${n} places on ${onPages} pages)` : `page${n > 1 ? ` (${n} places)` : ''}`}` : ''}`, () => {
     comps.list.splice(Math.min(at, comps.list.length), 0, c); comps.save();
-    if (pageSnap) restorePage(pageSnap);
+    if (pageSnap) (many ? pagesRestore : restorePage)(pageSnap);
     redraw();
   }, null, { ms: n ? 12000 : 8000, loud: true });
 }
@@ -1716,7 +1720,7 @@ const blockById = id => B.project.blocks.find(b => b.id === id);
 function removeBlock(id) {
   const arr = B.project.blocks, b = blockById(id); if (!b) return;
   const i = arr.indexOf(b);
-  if (b.replaces) arr.splice(i, 1, ...siteBlocks(state.model).filter(x => x.ref === b.replaces)); else arr.splice(i, 1);
+  if (b.replaces) arr.splice(i, 1, ...siteBlocks((typeof pageModel === 'function' ? pageModel() : state.model)).filter(x => x.ref === b.replaces)); else arr.splice(i, 1);
   B.project.edits = projectEdits().filter(e => e.target.scope !== id);
   saveProject(); toast(`Removed “${b.label}”${b.replaces ? ' — your own section is back' : ''}`); renderStudio();
 }
@@ -1828,11 +1832,16 @@ function ctxItems(t) {
     return items;
   }
   const a = t.addr, snap = snapshotPage();
+  // any part of your page can become a Library component (grab.js)
+  const save = typeof partStageScript === 'function' && !(blockById(a.scope) && blockById(a.scope).kind === 'comp') ? [
+    { label: `Save this ${a.scope === 'nav' && a.kind === 'section' ? 'menu bar' : a.scope === 'footer' && a.kind === 'section' ? 'footer' : KIND_NAMES[a.kind] || 'part'} to your Library`, icon: '✚', hint: 'keeps its look', run: () => stPost({ rkPartAt: { kind: a.kind } }) },
+    ...(a.kind !== 'section' ? [{ label: `Save the whole ${a.scope === 'nav' ? 'menu bar' : a.scope === 'footer' ? 'footer' : 'section'} to your Library`, icon: '✚', run: () => stPost({ rkPartAt: { kind: 'section' } }) }] : []),
+  ] : [];
   if (a.kind === 'section') {
     const b = blockById(a.scope);
     if (b && b.kind === 'comp') return [{ label: 'Swap for another component', icon: '⇄', run: () => { S.swapFor = { blockId: b.id }; renderEditorWs(); } }, { label: 'Remove', icon: '✕', danger: true, run: () => { removeBlock(b.id); toastUndo('Removed', snap); } }];
-    if (b) return [{ label: b.hidden ? 'Show this section' : 'Hide this section', icon: b.hidden ? '◉' : '◌', run: () => { b.hidden = !b.hidden; saveProject(); renderEditorWs(); toastUndo(b.hidden ? 'Section hidden' : 'Section shown', snap); } }];
-    return [];
+    if (b) return [{ label: b.hidden ? 'Show this section' : 'Hide this section', icon: b.hidden ? '◉' : '◌', run: () => { b.hidden = !b.hidden; saveProject(); renderEditorWs(); toastUndo(b.hidden ? 'Section hidden' : 'Section shown', snap); } }, ...(save.length ? ['-', ...save] : [])];
+    return save;
   }
   if ({ heading: 1, text: 1, button: 1, link: 1 }[a.kind]) items.push({ label: 'Edit the words', icon: '✎', hint: 'or double-click', run: () => stPost({ rkEditText: a }) });
   const hid = edits.find(e => e.mode === 'hide' && sameAddr(e.target, a));
@@ -1840,6 +1849,7 @@ function ctxItems(t) {
     : { label: 'Hide it', icon: '◌', run: () => { edits.push({ id: newEditId(), target: a, targetLabel: t.info && t.info.label || '', mode: 'hide' }); saveProject(); renderStudioPreview(); toastUndo('Hidden', snap); } });
   const mine = edits.filter(e => sameAddr(e.target, a) && (e.mode === 'text' || e.mode === 'hide'));
   if (mine.length) items.push({ label: 'Back to how it was', icon: '↺', run: () => { B.project.edits = edits.filter(x => !mine.includes(x)); saveProject(); renderStudioPreview(); } });
+  if (save.length) items.push('-', ...save);
   return items;
 }
 

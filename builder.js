@@ -23,7 +23,7 @@ function siteBlocks(m) {
 function newProject() {
   return {
     id: 'p' + Date.now().toString(36), name: (state.model && state.model.brand) || 'My site',
-    style: pickBaseStyle(), blocks: siteBlocks(state.model), hideNav: false, hideFooter: false,
+    style: pickBaseStyle(), blocks: siteBlocks((typeof pageModel === 'function' ? pageModel() : state.model)), hideNav: false, hideFooter: false,
     srcText: $('src').value, srcName: state.srcName || '', updated: Date.now(),
   };
 }
@@ -69,7 +69,7 @@ function ensureProject() {
   const id = store.get('reskin.currentProject', null);
   const saved = store.get('reskin.projects', []).find(p => p.id === id && p.srcText === src);
   B.project = saved || newProject();
-  if (!B.project.blocks.length) B.project.blocks = siteBlocks(state.model);
+  if (!B.project.blocks.length) B.project.blocks = siteBlocks((typeof pageModel === 'function' ? pageModel() : state.model));
   B.sel = null; B.wizard = null;
 }
 async function openProject(p) {
@@ -85,7 +85,7 @@ async function openProject(p) {
 const compById = id => comps.list.find(c => c.id === id);
 // the words a section (or the hero) would put into a component
 function contentFromRef(ref) {
-  const m = viewModel();
+  const m = typeof pageModel === 'function' ? pageModel() : viewModel();
   if (ref === 'hero') {
     const h = m.hero;
     return { title: h.title, text: h.paras.join(' '), button: (h.buttons[0] || {}).text || '', link: (h.buttons[0] || {}).href || '#', cards: [] };
@@ -160,7 +160,7 @@ const RULE_ATTRS = r => {
 };
 // studio: the Studio runtime's mode (studio.js) — 'edit' | 'try'; otherwise picked from edit / preview
 function composeDoc({ edit = false, rules = true, preview = false, studio = null } = {}) {
-  const p = B.project, m = viewModel();
+  const p = B.project, m = typeof pageModel === 'function' ? pageModel(p, { files: !preview }) : viewModel();
   const mode = studio || (edit ? 'show' : preview ? 'try' : 'live');
   const style = p.btnCss ? { ...p.style, extraCss: (p.style.extraCss || '') + '\n' + p.btnCss } : p.style;
   const blocks = p.blocks.filter(b => !b.hidden).map(b => {
@@ -175,7 +175,7 @@ function composeDoc({ edit = false, rules = true, preview = false, studio = null
   });
   return renderSite(m, style, {
     preview, base: state.base, blocks, hideNav: p.hideNav, hideFooter: p.hideFooter,
-    extraBody: `<script>(${__rkRuntime})(${edit}, ${rules});<\/script>` + (typeof studioScript === 'function' ? studioScript(p, mode) : ''),
+    extraBody: `<script>(${__rkRuntime})(${edit}, ${rules});<\/script>` + (typeof studioScript === 'function' ? studioScript(p, mode) : '') + (typeof pageLinkScript === 'function' ? pageLinkScript(p, preview) : '') + (mode === 'edit' && typeof partStageScript === 'function' ? partStageScript() : ''),
   });
 }
 // runs inside the composed page: sizes component frames, applies show rules, lets the builder select blocks
@@ -237,7 +237,7 @@ function badgesFor(b) {
   if (b.hidden) out.push('<span class="bx-badge">hidden</span>');
   return out.join('');
 }
-function labelOfRef(ref) { const b = siteBlocks(state.model).find(x => x.ref === ref); return b ? b.label : ref; }
+function labelOfRef(ref) { const b = siteBlocks((typeof pageModel === 'function' ? pageModel() : state.model)).find(x => x.ref === ref); return b ? b.label : ref; }
 
 function renderBuild() {
   const box = $('buildView');
@@ -285,15 +285,10 @@ function renderBuild() {
   // no "are you sure?": it resets at once and says what came off; Undo puts it all back
   $('bdReset').onclick = () => {
     const snap = snapshotPage(), n = (p.edits || []).filter(e => e.compId).length + (p.blocks || []).filter(b => b.kind === 'comp').length;
-    p.blocks = siteBlocks(state.model); p.edits = []; p.btnCss = ''; p.btnFrom = null; B.sel = null; B.wizard = null; saveProject(); renderBuild();
-    toastUndo(`Your page is back to your site’s own sections${n ? ` — ${n} component${n > 1 ? 's' : ''} came off` : ''}`, () => { Object.assign(p, JSON.parse(snap)); saveProject(); renderBuild(); }, null, { ms: 12000, loud: true });
+    p.blocks = siteBlocks((typeof pageModel === 'function' ? pageModel() : state.model)); p.edits = []; p.btnCss = ''; p.btnFrom = null; B.sel = null; B.wizard = null; saveProject(); renderBuild();
+    toastUndo(`Your page is back to your site’s own sections${n ? ` — ${n} component${n > 1 ? 's' : ''} came off` : ''}`, () => { const o = JSON.parse(snap); delete o._page; Object.assign(p, o); saveProject(); renderBuild(); }, null, { ms: 12000, loud: true });
   };
-  $('bdDl').onclick = () => {
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([composeDoc({ preview: false })], { type: 'text/html' }));
-    a.download = `${slug(p.name || 'site')}.html`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-    toast('Downloaded — this file is your whole site');
-  };
+  $('bdDl').onclick = () => { toast('Downloaded — ' + downloadSite(p)); };
   $('bdOpen').onclick = () => {
     state.current = { ...p.style, name: p.name, label: 'Your built page', id: 'built-' + p.id, _built: true };
     $('mName').textContent = p.name; $('mInfo').textContent = 'Your built page · show rules are live here';
@@ -391,7 +386,7 @@ function renderSide() {
   $('sdHide').onclick = () => { b.hidden = !b.hidden; saveProject(); renderBlockList(); renderSide(); renderBuildPreview(); };
   if (isComp) $('sdDel').onclick = () => {
     const arr = B.project.blocks, i = arr.indexOf(b);
-    if (b.replaces) arr.splice(i, 1, ...siteBlocks(state.model).filter(x => x.ref === b.replaces)); else arr.splice(i, 1);
+    if (b.replaces) arr.splice(i, 1, ...siteBlocks((typeof pageModel === 'function' ? pageModel() : state.model)).filter(x => x.ref === b.replaces)); else arr.splice(i, 1);
     B.sel = null; saveProject(); renderBuild();
   };
 }
@@ -407,7 +402,7 @@ function startWizard(o) {
   }
   if (o.editing) {
     const b = p.blocks.find(x => x.id === o.editing);
-    B.wizard = { step: o.step || 1, editing: b.id, compId: b.compId, place: b.replaces ? 'replace' : 'new', replaces: b.replaces || (siteBlocks(state.model)[0] || {}).ref,
+    B.wizard = { step: o.step || 1, editing: b.id, compId: b.compId, place: b.replaces ? 'replace' : 'new', replaces: b.replaces || (siteBlocks((typeof pageModel === 'function' ? pageModel() : state.model))[0] || {}).ref,
       after: null, fill: b.fill, content: structuredClone(b.content || contentFromRef(b.replaces || 'hero')), recolor: b.recolor, rules: { ...DEFAULT_RULES(), ...b.rules }, variant: null };
     return renderSide();
   }
@@ -433,7 +428,7 @@ function renderWizard() {
       <div class="pick">${comps.list.map(c => `<button data-pick="${c.id}" class="${w.compId === c.id ? 'on' : ''}"><div class="th" data-th="${c.id}"></div><span class="nm">${esc(c.name)}</span></button>`).join('')}</div>`
       : `<div class="bx-empty">You haven't saved any components yet.<br><br><button class="primary" id="wzGoComps">Find components</button></div>`;
   } else if (w.step === 2) {
-    const sites = siteBlocks(state.model);
+    const sites = siteBlocks((typeof pageModel === 'function' ? pageModel() : state.model));
     body = `<p class="help">Is this new, or should it take the place of something on your page?</p>
       <label class="opt ${w.place === 'replace' ? 'on' : ''}"><input type="radio" name="pl" value="replace" ${w.place === 'replace' ? 'checked' : ''}><div><b>Replace part of my page</b><span>The component takes that part's place and uses its words.</span><br>
         <select id="wzRep">${sites.map(s => `<option value="${s.ref}" ${s.ref === w.replaces ? 'selected' : ''}>${esc(s.label)}</option>`).join('')}</select></div></label>
@@ -518,7 +513,7 @@ function finishWizard() {
     let arr = p.blocks;
     if (w.editing) {
       const old = arr.find(x => x.id === w.editing);
-      if (old.replaces && old.replaces !== block.replaces) { const i = arr.indexOf(old); arr.splice(i, 0, ...siteBlocks(state.model).filter(x => x.ref === old.replaces)); }
+      if (old.replaces && old.replaces !== block.replaces) { const i = arr.indexOf(old); arr.splice(i, 0, ...siteBlocks((typeof pageModel === 'function' ? pageModel() : state.model)).filter(x => x.ref === old.replaces)); }
       arr = p.blocks = arr.filter(x => x.id !== w.editing);
     }
     if (block.replaces) {

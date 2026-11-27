@@ -906,7 +906,7 @@ async function switchToTarget() {
 // static styles never need scripts; animated remixes run the target's own scripts (still isolated from this app)
 const sandboxFor = s => (s.live ? 'allow-scripts ' : '') + 'allow-popups allow-popups-to-escape-sandbox';
 // phones overlay their scrollbars: at phone width, don't let a classic scrollbar eat the 390px frame (preview only, not downloads)
-const PREVIEW_CSS = '<style>@media (max-width:480px){html{scrollbar-width:none}html::-webkit-scrollbar{display:none}}</style>';
+const PREVIEW_CSS = '<style data-rk-ui>@media (max-width:480px){html{scrollbar-width:none}html::-webkit-scrollbar{display:none}}</style>';
 const injectPreviewCss = html => { const i = html.toLowerCase().indexOf('</head>'); return i >= 0 ? html.slice(0, i) + PREVIEW_CSS + html.slice(i) : PREVIEW_CSS + html; };
 function setModalDoc(html, s) {
   const built = !!(state.current && state.current._built);

@@ -2438,7 +2438,7 @@ function renderSite(m, s, opt = {}) {
   s = withOverrides(s);
   LINKOPT = opt;
   const navLinks = m.nav.map(l => `<li><a ${L(l.href)}>${esc(l.text)}</a></li>`).join('');
-  const brand = `<a class="brand" ${L('#')}>${m.logo ? `<img class="logo" src="${esc(m.logo.src)}" alt="${esc(m.logo.alt || m.brand)}">` : ''}${m.logo && m.hideName ? '' : esc(m.brand)}</a>`;
+  const brand = `<a class="brand" ${L(m.brandHref || '#')}>${m.logo ? `<img class="logo" src="${esc(m.logo.src)}" alt="${esc(m.logo.alt || m.brand)}">` : ''}${m.logo && m.hideName ? '' : esc(m.brand)}</a>`;
   const cta = m.navCta ? `<a class="btn btn-sm" ${L(m.navCta.href)}>${esc(m.navCta.text)}</a>` : '';
   const nav = `<header class="nav nav-${s.nav}"><div class="wrap">${brand}${navLinks ? `<ul>${navLinks}</ul>` : ''}${cta}</div></header>`;
 

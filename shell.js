@@ -837,7 +837,10 @@ async function importIconZip(file) {
 }
 
 /* ------------------------------------------------------------------ 7. right-click menu (Studio canvas) */
-function closeCtx() { const m = $('ctxMenu'); if (m) m.remove(); }
+// one "click outside closes it" listener at a time: a menu closed by its own item used to leave its listener behind, and
+// after a right-click inside the page (which the app never hears) that stale listener closed the next menu on the first press
+let CTX_OFF = null;
+function closeCtx() { const m = $('ctxMenu'); if (m) m.remove(); if (CTX_OFF) { removeEventListener('mousedown', CTX_OFF); CTX_OFF = null; } }
 function openCtx(x, y, items) {
   closeCtx();
   const m = document.createElement('div'); m.id = 'ctxMenu'; m.className = 'ctx';
@@ -846,7 +849,7 @@ function openCtx(x, y, items) {
   const r = m.getBoundingClientRect();
   m.style.left = Math.min(x, innerWidth - r.width - 8) + 'px'; m.style.top = Math.min(y, innerHeight - r.height - 8) + 'px';
   m.querySelectorAll('[data-i]').forEach(b => b.onclick = () => { closeCtx(); items[+b.dataset.i].run(); });
-  setTimeout(() => addEventListener('mousedown', function off(e) { if (!m.contains(e.target)) { closeCtx(); removeEventListener('mousedown', off); } }), 0);
+  setTimeout(() => { if (!m.isConnected) return; CTX_OFF = e => { if (!m.contains(e.target)) closeCtx(); }; addEventListener('mousedown', CTX_OFF); }, 0);
 }
 
 /* ------------------------------------------------------------------ 8. Reskin's own colour picker */
