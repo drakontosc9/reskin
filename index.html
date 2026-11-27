@@ -233,9 +233,9 @@
     .modal{padding:0}.mbar{border-radius:0}.mstage{border-radius:0}
   }
 </style>
-<link rel="stylesheet" href="builder.css">
-<link rel="stylesheet" href="studio.css">
-<link rel="stylesheet" href="inspect.css">
+<link rel="stylesheet" href="builder.css?v=20261127b">
+<link rel="stylesheet" href="studio.css?v=20261127b">
+<link rel="stylesheet" href="inspect.css?v=20261127b">
 </head>
 <body>
 <header class="top">
@@ -318,13 +318,16 @@
 <input type="file" id="file" accept=".html,.htm,.tsx,.jsx,.ts,.js,.txt,text/html" multiple hidden>
 <input type="file" id="tfile" multiple hidden>
 
-<script src="engine.js"></script>
-<script src="app.js"></script>
-<script src="builder.js"></script>
-<script src="studio.js"></script>
-<script src="shell.js"></script>
-<script src="inspect.js"></script>
-<script src="config.js"></script>
-<script src="cloud.js"></script>
+<!-- Asset version: bump ?v= on every deploy, so a fresh page never runs scripts the browser cached from the last one
+     (GitHub Pages lets browsers keep files for 10 minutes). #toast stays for scripts cached before the message stack. -->
+<div id="toast" hidden></div>
+<script src="engine.js?v=20261127b"></script>
+<script src="app.js?v=20261127b"></script>
+<script src="builder.js?v=20261127b"></script>
+<script src="studio.js?v=20261127b"></script>
+<script src="shell.js?v=20261127b"></script>
+<script src="inspect.js?v=20261127b"></script>
+<script src="config.js?v=20261127b"></script>
+<script src="cloud.js?v=20261127b"></script>
 </body>
 </html>
