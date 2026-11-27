@@ -309,21 +309,26 @@ function __rkElem(D) {
       if (e.pointerType === 'touch' || e.button !== 0 || PICK || WORDS || wEl) return;
       var t = e.target; if (!t || !t.closest || t.closest(CONTROL)) return;
       if (/^(grab|grabbing|move|pointer|col-resize|row-resize|ew-resize|ns-resize|crosshair)$/.test(getComputedStyle(t).cursor)) return;
-      var x0 = e.clientX, y0 = e.clientY;
-      HOLD = { on: false, t: setTimeout(function () { if (!HOLD) return; HOLD.on = true; swallow = true; say('start', { clientX: x0, clientY: y0 }); }, 450), x0: x0, y0: y0 };
+      var x0 = e.clientX, y0 = e.clientY, p0 = { clientX: x0, clientY: y0 };
+      // a moment in, the page shows a ring filling up under the pointer, so the hold is something you can see coming
+      HOLD = { on: false, armed: false, x0: x0, y0: y0,
+        a: setTimeout(function () { if (HOLD && !HOLD.on) { HOLD.armed = true; say('arm', p0); } }, 150),
+        t: setTimeout(function () { if (!HOLD) return; HOLD.on = true; swallow = true; say('start', p0); }, 450) };
     }, true);
+    var unhold = function () { if (!HOLD) return; clearTimeout(HOLD.a); clearTimeout(HOLD.t); if (HOLD.armed && !HOLD.on) parent.postMessage({ rkHold: { id: D.id, phase: 'disarm' } }, '*'); HOLD = null; };
     document.addEventListener('pointermove', function (e) {
       if (!HOLD) return;
-      if (!HOLD.on) { if (Math.abs(e.clientX - HOLD.x0) + Math.abs(e.clientY - HOLD.y0) > 6) { clearTimeout(HOLD.t); HOLD = null; } return; }
+      if (!HOLD.on) { if (Math.abs(e.clientX - HOLD.x0) + Math.abs(e.clientY - HOLD.y0) > 6) unhold(); return; }
       e.preventDefault(); say('move', e);
     }, true);
     document.addEventListener('pointerup', function (e) {
-      if (!HOLD) return; clearTimeout(HOLD.t);
-      if (HOLD.on) { e.preventDefault(); e.stopPropagation(); say('end', e); }
-      HOLD = null;
+      if (!HOLD) return;
+      if (HOLD.on) { e.preventDefault(); e.stopPropagation(); say('end', e); clearTimeout(HOLD.a); HOLD = null; return; }
+      unhold();
     }, true);
+    document.addEventListener('pointercancel', unhold, true);
     document.addEventListener('click', function (e) { if (swallow) { swallow = false; e.preventDefault(); e.stopPropagation(); } }, true);
-    document.addEventListener('keydown', function (e) { if (HOLD && HOLD.on && e.key === 'Escape') { clearTimeout(HOLD.t); HOLD = null; swallow = false; parent.postMessage({ rkHold: { id: D.id, phase: 'cancel' } }, '*'); } }, true);
+    document.addEventListener('keydown', function (e) { if (HOLD && HOLD.on && e.key === 'Escape') { clearTimeout(HOLD.t); clearTimeout(HOLD.a); HOLD = null; swallow = false; parent.postMessage({ rkHold: { id: D.id, phase: 'cancel' } }, '*'); } }, true);
     document.addEventListener('selectstart', function (e) { if (HOLD && HOLD.on) e.preventDefault(); }, true);
   }
   if (D.edit) {
@@ -725,7 +730,12 @@ function __rkStudio(EDITS, MODE) {
     '.rk-tag{position:fixed;z-index:2147483001;pointer-events:none;font:600 11.5px/1 Inter,system-ui,sans-serif;background:#1d1b19;color:#fff;padding:5px 8px;border-radius:6px;display:none}' +
     // moving: the lifted component fades and lets the pointer through; the tag says what letting go will do
     '.rk-lifted{opacity:.35!important;pointer-events:none!important;outline:2px dashed #2f6bff!important;outline-offset:3px}.rk-mvtag{z-index:2147483005;background:#2f6bff}' +
-    'body.rk-moving,body.rk-moving *{cursor:grabbing!important;user-select:none!important}.rk-bar .rk-grip{cursor:grab}' +
+    'body.rk-moving,body.rk-moving *{cursor:grabbing!important;user-select:none!important}.rk-bar .rk-grip{cursor:grab;touch-action:none}' +
+    // pressing and holding a component: a ring fills under the pointer until it lifts
+    '@property --rkp{syntax:"<angle>";inherits:false;initial-value:0turn}' +
+    '.rk-ring{position:fixed;z-index:2147483005;pointer-events:none;width:36px;height:36px;margin:-18px 0 0 -18px;border-radius:50%;display:none;background:conic-gradient(#2f6bff var(--rkp),rgba(47,107,255,.2) 0);-webkit-mask:radial-gradient(circle,transparent 12px,#000 13px);mask:radial-gradient(circle,transparent 12px,#000 13px)}' +
+    '.rk-ring.on{display:block;animation:rkRing .3s linear forwards}@keyframes rkRing{to{--rkp:1turn}}' +
+    '@media (prefers-reduced-motion:reduce){.rk-ring.on{animation:none;--rkp:1turn}}' +
     // the resize corner (or edge, for a row's width / a bar's height)
     '.rk-rs{position:fixed;z-index:2147483004;display:none;width:28px;height:28px;border-radius:9px;background:#1d1b19;box-shadow:0 6px 18px rgba(0,0,0,.3);touch-action:none}' +
     '.rk-rs::after{content:"";position:absolute;inset:8px;border-right:2.5px solid #fff;border-bottom:2.5px solid #fff;border-radius:0 0 3px 0}' +
@@ -842,16 +852,31 @@ function __rkStudio(EDITS, MODE) {
 
   // ---- move a placed component: the ✥ Move grip, or press and hold the component (its frame tells us). It's lifted,
   //      the page shows the same drop spots as a drag, and it lands where you let go. Esc puts it back.
+  //      Let go without moving and it stays picked up: it follows the pointer and the next click puts it down.
   var MV = null;
-  var mvTag = mk('rk-tag rk-mvtag');
-  function moveStart(id, x, y) {
+  var mvTag = mk('rk-tag rk-mvtag'), ring = mk('rk-ring');
+  // the click that ends a move or a resize lands on whatever is under the pointer; it isn't meant for that
+  var eatClick = false;
+  function eatNextClick() { eatClick = true; setTimeout(function () { eatClick = false; }, 0); }
+  document.addEventListener('click', function (ev) { if (eatClick) { eatClick = false; ev.preventDefault(); ev.stopImmediatePropagation(); } }, true);
+  function moveStart(id, x, y, src) {
     var el = document.querySelector('[data-rk-edit="' + id + '"]'); if (!el || MV) return;
-    hideBar(); MV = { id: id, el: el, it: null };
+    hideBar(); ring.classList.remove('on'); MV = { id: id, el: el, it: null, x0: x, y0: y, moved: false, sticky: false, src: src || 'grip' };
     document.body.classList.add('rk-dragging', 'rk-moving'); el.classList.add('rk-lifted');
+    try { focus(); } catch (e) {}   // so Esc reaches us (pressing the grip doesn't move focus here by itself)
     moveTo(x, y);
+  }
+  // released: drop it where it is, or, if it never moved, keep holding it until the next click
+  function moveRelease() {
+    if (!MV) return;
+    // a hold's release can reach us twice (from the component's frame and from the page): count it once
+    var now = Date.now(); if (MV.src === 'hold' && MV.relAt && now - MV.relAt < 150) return; MV.relAt = now;
+    if (!MV.moved && !MV.sticky) { MV.sticky = true; moveTo(MV.x, MV.y); return; }
+    moveDone(true);
   }
   function moveTo(x, y) {
     if (!MV) return;
+    if (!MV.moved && Math.abs(x - MV.x0) + Math.abs(y - MV.y0) > 6) MV.moved = true;
     // near the top or bottom of the page view: keep scrolling that way, so anywhere on the page can be reached
     MV.x = x; MV.y = y; var edge = Math.min(70, innerHeight * 0.12);
     MV.dy = y < edge ? -Math.ceil((edge - y) / 4) : y > innerHeight - edge ? Math.ceil((y - innerHeight + edge) / 4) : 0;
@@ -860,20 +885,30 @@ function __rkStudio(EDITS, MODE) {
     // never onto itself, or beside something that sits beside it
     if (it && (it.editId === MV.id || (it.el && (MV.el.contains(it.el) || it.el.contains(MV.el))))) it = null;
     MV.it = it; showDrop(it);
-    mvTag.textContent = it ? (it.kind === 'gap' ? 'Move it here' : it.kind === 'swap' ? 'Trade places with it' : it.label) : 'Move it… (Esc puts it back)';
+    mvTag.textContent = it ? (it.kind === 'gap' ? 'Move it here' : it.kind === 'swap' ? 'Trade places with it' : it.label) : MV.sticky ? 'Click where it should go · Esc puts it back' : 'Move it… (Esc puts it back)';
     mvTag.style.display = 'block'; mvTag.style.left = Math.min(x + 16, innerWidth - mvTag.offsetWidth - 8) + 'px'; mvTag.style.top = Math.max(y - 34, 6) + 'px';
   }
   function moveDone(keep) {
-    if (!MV) return; var m = MV; MV = null; clearInterval(m.iv);
+    if (!MV) return; var m = MV; MV = null; clearInterval(m.iv); eatNextClick();
     document.body.classList.remove('rk-dragging', 'rk-moving'); m.el.classList.remove('rk-lifted'); hideDrop(); mvTag.style.display = 'none';
     if (keep && m.it) parent.postMessage({ rkMove: { editId: m.id, drop: { kind: m.it.kind, addr: m.it.addr || null, info: m.it.info || null, editId: m.it.editId || null, scope: m.it.scope || null, side: m.it.side || null } } }, '*');
   }
   bar.addEventListener('pointerdown', function (ev) {
     var b = ev.target.closest('[data-a="move"]'); if (!b || !barFor || !barFor.editId) return;
-    ev.preventDefault(); moveStart(barFor.editId, ev.clientX, ev.clientY);
+    ev.preventDefault(); grab(ev); moveStart(barFor.editId, ev.clientX, ev.clientY);
   });
-  document.addEventListener('pointermove', function (ev) { if (MV) moveTo(ev.clientX, ev.clientY); if (RS) resizeTo(ev.clientX, ev.clientY); });
-  document.addEventListener('pointerup', function () { if (MV) moveDone(true); if (RS) resizeDone(true); });
+  // keep getting the pointer while it's held, even when it wanders over the toolbar or off the page
+  function grab(ev) { try { document.documentElement.setPointerCapture(ev.pointerId); } catch (e) {} }
+  document.addEventListener('pointermove', function (ev) {
+    // the button came up somewhere we never heard about (outside the window): finish with what's shown
+    if (ev.buttons === 0 && ev.pointerType === 'mouse') { if (MV && !MV.sticky && MV.src !== 'hold') { moveRelease(); return; } if (RS) { resizeDone(true); return; } }
+    if (MV) moveTo(ev.clientX, ev.clientY); if (RS) resizeTo(ev.clientX, ev.clientY);
+  });
+  // while it's picked up, a press on the page is the drop, not a click on what's under it
+  document.addEventListener('pointerdown', function (ev) { if (MV && MV.sticky) { ev.preventDefault(); ev.stopPropagation(); grab(ev); } }, true);
+  document.addEventListener('pointerup', function () { if (MV) moveRelease(); if (RS) resizeDone(true); });
+  document.addEventListener('pointercancel', function () { if (MV && !MV.sticky) moveDone(false); if (RS) resizeDone(false); });
+  addEventListener('blur', function () { if (MV && !MV.sticky && MV.src !== 'hold') moveDone(false); if (RS) resizeDone(false); });
   document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape' && (MV || RS)) { ev.preventDefault(); if (MV) moveDone(false); if (RS) resizeDone(false); } }, true);
   // a hold inside a component: only from that component's own frame, in that frame's coordinates
   function fromFrame(ev, id) {
@@ -902,7 +937,7 @@ function __rkStudio(EDITS, MODE) {
   var rsLast = null;
   rs.addEventListener('dblclick', function (ev) { ev.preventDefault(); if (rsLast) parent.postMessage({ rkResize: { editId: rsLast, reset: true } }, '*'); });
   rs.addEventListener('pointerdown', function (ev) {
-    if (!barFor || !barFor.editId) return; ev.preventDefault();
+    if (!barFor || !barFor.editId) return; ev.preventDefault(); grab(ev);
     var el = barFor.el, r = el.getBoundingClientRect(), k = rsKind(el); if (!k) return;
     rsLast = barFor.editId;
     RS = { id: barFor.editId, el: el, k: k, x0: ev.clientX, y0: ev.clientY, w0: r.width, h0: r.height, was: el.getAttribute('style') || '', cls: el.className };
@@ -925,7 +960,7 @@ function __rkStudio(EDITS, MODE) {
     placeRs(s.el);
   }
   function resizeDone(keep) {
-    var s = RS; RS = null; document.body.classList.remove('rk-dragging'); mvTag.style.display = 'none'; rs.style.display = 'none';
+    var s = RS; if (!s) return; RS = null; eatNextClick(); document.body.classList.remove('rk-dragging'); mvTag.style.display = 'none'; rs.style.display = 'none';
     if (!keep || (s.cols == null && s.w == null && s.h == null)) { s.el.className = s.cls; s.el.setAttribute('style', s.was); if (keep) placeRs(s.el); return; }   // a click, not a drag: the handle stays (a double-click resets)
     parent.postMessage({ rkResize: { editId: s.id, cols: s.cols || null, rows: s.rows || null, w: s.w || null, h: s.h || null } }, '*');
   }
@@ -977,11 +1012,14 @@ function __rkStudio(EDITS, MODE) {
   addEventListener('message', function (ev) {
     var d = ev.data || {};
     if ('rkDragging' in d) dragging(d.rkDragging);
+    if (d.rkEsc && (MV || RS)) { if (MV) moveDone(false); if (RS) resizeDone(false); }   // Esc pressed while the app had focus
     if (d.rkHold && d.rkHold.id) {
       var h = d.rkHold, at = fromFrame(ev, h.id); if (!at) return;
-      if (h.phase === 'start') { var p0 = at(h.x, h.y); moveStart(h.id, p0[0], p0[1]); }
-      else if (h.phase === 'move' && MV) { var p1 = at(h.x, h.y); moveTo(p1[0], p1[1]); }
-      else if (h.phase === 'end' && MV) { var p2 = at(h.x, h.y); moveTo(p2[0], p2[1]); moveDone(true); }
+      if (h.phase === 'arm' && !MV) { var pa = at(h.x, h.y); ring.classList.remove('on'); ring.style.left = pa[0] + 'px'; ring.style.top = pa[1] + 'px'; void ring.offsetWidth; ring.classList.add('on'); }
+      else if (h.phase === 'disarm') ring.classList.remove('on');
+      else if (h.phase === 'start') { var p0 = at(h.x, h.y); moveStart(h.id, p0[0], p0[1], 'hold'); }
+      else if (h.phase === 'move' && MV && !MV.sticky) { var p1 = at(h.x, h.y); moveTo(p1[0], p1[1]); }
+      else if (h.phase === 'end' && MV && !MV.sticky) { var p2 = at(h.x, h.y); moveTo(p2[0], p2[1]); moveRelease(); }
       else if (h.phase === 'cancel') moveDone(false);
     }
     if ('rkNavish' in d) NAVISH = !!d.rkNavish;
@@ -1303,17 +1341,18 @@ function renderEditorWs() {
   const rail = $('stRail');
   comps.list.forEach(c => {
     const el = document.createElement('div');
-    el.className = 'st-chip' + (S.flash === c.id ? ' flash' : '') + (S.swapFor ? ' pickable' : ''); el.draggable = true; el.dataset.c = c.id;
+    el.className = 'st-chip' + (S.flash === c.id ? ' flash' : '') + (S.swapFor ? ' pickable' : '') + (CARRY.id === c.id ? ' armed' : ''); el.dataset.c = c.id;
+    el.title = S.swapFor ? 'Swap this one in' : 'Drag it onto your page — or click it, then click where it should go';
     el.innerHTML = `<div class="th"></div><span>${esc(c.name)}</span><small>${esc(c.source)}</small>`;
     const th = el.querySelector('.th');
     if (c.icon) th.innerHTML = `<img alt="" src="data:image/svg+xml;charset=utf-8,${encodeURIComponent(c.svg)}" style="width:44px;height:44px;margin:auto;display:block;position:relative;top:50%;transform:translateY(-50%)">`;
     else { const f = document.createElement('iframe'); f.setAttribute('sandbox', 'allow-scripts'); f.setAttribute('tabindex', '-1'); f.setAttribute('loading', 'lazy'); f.srcdoc = compThumbDoc(c); th.appendChild(f); const fit = () => { if (th.clientWidth) f.style.transform = `scale(${th.clientWidth / 600})`; }; fit(); new ResizeObserver(fit).observe(th); }
-    el.addEventListener('dragstart', e => { S.drag = c.id; e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData('text/plain', 'reskin-component:' + c.id); el.classList.add('drag'); $('stFrame').classList.add('dropping'); stPost({ rkNavish: isNavish(c) }); stPost({ rkDragging: true }); });
-    el.addEventListener('dragend', () => { el.classList.remove('drag'); const fr = $('stFrame'); if (fr) fr.classList.remove('dropping'); stPost({ rkDragging: false }); setTimeout(() => { S.drag = null; stPost({ rkNavish: false }); }, 400); });
-    el.onclick = () => {
+    // drag it onto the page, or click it and then click where it should go (the same carry as the Library's cards)
+    makeCarryable(el, c, e => {
       if (S.swapFor) { const w = S.swapFor; S.swapFor = null; return placeComp(c.id, w.editId ? { kind: 'swap', editId: w.editId } : { kind: 'swapblock', scope: w.blockId }); }
-      toast('Drag it onto your page');
-    };
+      if (CARRY.id === c.id) return carryCancel();   // clicking it again puts it back
+      startCarry(c, e.clientX, e.clientY, { sticky: true });
+    });
     rail.appendChild(el);
   });
   S.flash = null;
@@ -1505,19 +1544,23 @@ async function importDropped(files, text) {
   } catch (e) { toast(e.message || 'Couldn’t add that', 4500); return null; }
 }
 
+// Esc in the app also puts back whatever the page is moving or resizing (focus may not be inside the page)
+addEventListener('keydown', e => { if (e.key === 'Escape' && state.view === 'studio' && !CARRY.id) stPost({ rkEsc: true }); });
 function stPost(msg) { const f = $('stFrame') && $('stFrame').querySelector('iframe'); if (f && f.contentWindow) f.contentWindow.postMessage(msg, '*'); }
 /* ---- carry a component from the Library to your page: press and hold a card, it comes with you to Studio ----
    The stage is a sandboxed frame, so while carrying it ignores the pointer and the app tells it where the pointer
    is; the page shows the same live preview as a drag from the rail. */
-const CARRY = { id: null, ghost: null, hint: null, scroll: 0, iv: 0, at: null, ready: false, drop: null };
+const CARRY = { id: null, ghost: null, hint: null, scroll: 0, iv: 0, at: null, ready: false, drop: null, sticky: false, sx: 0, sy: 0 };
 function stageRect() { const f = $('stFrame') && $('stFrame').querySelector('iframe'); return f ? f.getBoundingClientRect() : null; }
-function startCarry(c, x, y) {
+// opts.sticky: picked up by a click, so it follows the pointer until the next click (on the page: drop; elsewhere: put back)
+function startCarry(c, x, y, opts) {
   if (CARRY.id) endCarry();
-  CARRY.id = c.id; S.drag = c.id;
+  CARRY.id = c.id; S.drag = c.id; CARRY.sticky = !!(opts && opts.sticky); CARRY.sx = x; CARRY.sy = y;
   const g = CARRY.ghost = document.createElement('div'); g.className = 'carry-ghost';
-  g.innerHTML = `<b>${esc(c.name)}</b><span>Drop it on your page</span>`;
+  g.innerHTML = `<b>${esc(c.name)}</b><span>${CARRY.sticky ? 'Click on your page to put it there' : 'Drop it on your page'}</span>`;
   document.body.appendChild(g); moveGhost(x, y);
   document.body.classList.add('carrying');
+  document.querySelectorAll(`.st-chip[data-c="${c.id}"]`).forEach(x => x.classList.add('armed'));
   CARRY.ready = state.view === 'studio' && !!stageRect();
   if (state.view !== 'studio') setView('studio');
   let seen = false; try { seen = !!localStorage.getItem('reskin.carryTip'); localStorage.setItem('reskin.carryTip', '1'); } catch {}
@@ -1529,7 +1572,8 @@ function startCarry(c, x, y) {
 }
 function carryListen() {
   stPost({ rkNavish: isNavish(compById(CARRY.id)) });
-  addEventListener('blur', carryCancel); addEventListener('pointercancel', carryCancel, true);
+  addEventListener('blur', carryBlur); addEventListener('pointercancel', carryPCancel, true);
+  addEventListener('pointerdown', carryDown, true);
   addEventListener('pointermove', carryMove, true); addEventListener('pointerup', carryUp, true);
   addEventListener('wheel', carryWheel, { capture: true, passive: false }); addEventListener('keydown', carryKey, true);
   CARRY.iv = setInterval(() => { if (CARRY.scroll) stPost({ rkScrollBy: CARRY.scroll }); }, 16);
@@ -1545,10 +1589,26 @@ function carryMove(e) {
   const EDGE = 70; CARRY.scroll = on ? (CARRY.at.y < EDGE ? -Math.ceil((EDGE - CARRY.at.y) / 5) : CARRY.at.y > r.height - EDGE ? Math.ceil((CARRY.at.y - (r.height - EDGE)) / 5) : 0) : 0;
 }
 function carryWheel(e) { if (!CARRY.at) return; e.preventDefault(); stPost({ rkScrollBy: e.deltaY }); setTimeout(() => stPost({ rkCarry: CARRY.at }), 30); }
-function carryCancel() { if (!CARRY.id) return; stPost({ rkCarry: null }); endCarry(); toast('Put back'); }
+function carryCancel() { if (!CARRY.id) return; stPost({ rkCarry: null }); S.drag = null; endCarry(); toast('Put back'); }
+// a held drag ends if the window loses the pointer; a click-carry waits for its click (a touch scroll, say, doesn't drop it)
+function carryBlur() { if (!CARRY.sticky) carryCancel(); }
+function carryPCancel() { if (!CARRY.sticky) carryCancel(); }
 function carryKey(e) { if (e.key === 'Escape') { e.preventDefault(); carryCancel(); } }
-function carryUp() {
+// while carrying, a press is only ever the drop: it never reaches the button, card or chip underneath
+function carryDown(e) { if (CARRY.sticky) { e.preventDefault(); e.stopPropagation(); } }
+// the click that follows the drop would land on whatever is under the pointer
+function eatAppClick() { const f = e => { e.preventDefault(); e.stopImmediatePropagation(); }; addEventListener('click', f, { capture: true, once: true }); setTimeout(() => removeEventListener('click', f, true), 0); }
+function carryUp(e) {
   if (!CARRY.id) return;
+  if (e) {
+    // picked up and let go on the spot (a hold without moving): keep carrying; the next click places it
+    if (!CARRY.sticky && Math.hypot(e.clientX - CARRY.sx, e.clientY - CARRY.sy) < 8) {
+      CARRY.sticky = true; e.stopPropagation(); eatAppClick();
+      if (CARRY.ghost) CARRY.ghost.querySelector('span').textContent = 'Click on your page to put it there';
+      return;
+    }
+    carryMove(e); e.stopPropagation(); eatAppClick();
+  }
   if (CARRY.at) {
     CARRY.scroll = 0; clearInterval(CARRY.iv); CARRY.drop = CARRY.at;
     if (CARRY.ghost) CARRY.ghost.classList.add('landing');
@@ -1556,18 +1616,21 @@ function carryUp() {
     setTimeout(() => { if (CARRY.id) { endCarry(); toast('Your page didn’t load in time — try again'); } }, 8000);
     return;
   }
-  stPost({ rkCarry: null }); endCarry(); toast('Not placed — let go over your page to put it there');
+  if (CARRY.sticky) return carryCancel();   // clicked away from the page
+  stPost({ rkCarry: null }); S.drag = null; endCarry(); toast('Not placed — let go over your page to put it there');
 }
 function endCarry() {
   removeEventListener('pointermove', carryMove, true); removeEventListener('pointerup', carryUp, true);
+  removeEventListener('pointerdown', carryDown, true);
   removeEventListener('wheel', carryWheel, true); removeEventListener('keydown', carryKey, true);
-  removeEventListener('blur', carryCancel); removeEventListener('pointercancel', carryCancel, true);
+  removeEventListener('blur', carryBlur); removeEventListener('pointercancel', carryPCancel, true);
   clearInterval(CARRY.iv); CARRY.scroll = 0;
   if (CARRY.ghost) CARRY.ghost.remove(); if (CARRY.hint) CARRY.hint.remove();
+  document.querySelectorAll('.st-chip.armed').forEach(x => x.classList.remove('armed'));
   document.body.classList.remove('carrying'); stPost({ rkNavish: false });
-  CARRY.id =CARRY.ghost = CARRY.hint = CARRY.at = CARRY.drop = null; CARRY.ready = false;
+  CARRY.id = CARRY.ghost = CARRY.hint = CARRY.at = CARRY.drop = null; CARRY.ready = false; CARRY.sticky = false;
 }
-// press and hold (or press and move) on a card to pick it up; a plain click still opens it
+// press and hold (or press and move) on a card to pick it up; a plain click goes to onClick(event)
 function makeCarryable(el, c, onClick) {
   let t = 0, sx = 0, sy = 0, picked = false, down = false;
   el.addEventListener('pointerdown', e => {
@@ -1580,7 +1643,7 @@ function makeCarryable(el, c, onClick) {
     if (Math.hypot(e.clientX - sx, e.clientY - sy) > 8) { clearTimeout(t); picked = true; startCarry(c, e.clientX, e.clientY); }
   });
   const stop = () => { down = false; clearTimeout(t); };
-  el.addEventListener('pointerup', e => { const wasPicked = picked, was = down; stop(); if (was && !wasPicked && onClick && (!el.querySelector('.cthumb') || e.target.closest('.cthumb'))) onClick(); });
+  el.addEventListener('pointerup', e => { const wasPicked = picked, was = down; stop(); if (was && !wasPicked && onClick && (!el.querySelector('.cthumb') || e.target.closest('.cthumb'))) onClick(e); });
   el.addEventListener('pointercancel', stop);
   el.addEventListener('dragstart', e => e.preventDefault());   // no native image drag on the thumbnail
 }
