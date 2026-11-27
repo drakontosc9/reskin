@@ -1,5 +1,5 @@
 /* Reskin cloud: optional Supabase accounts + sync.
-   Off until config.js has supabaseUrl + supabaseAnonKey. Then: email magic-link sign-in,
+   Off until config.js has supabaseUrl + supabaseAnonKey. Then: sign in with Google (when switched on in Supabase) or an emailed link,
    and projects / components sync to the tables in supabase/schema.sql. Everything keeps
    working without an account (saved in this browser). */
 const Cloud = (() => {
@@ -14,7 +14,7 @@ const Cloud = (() => {
       w.innerHTML = `<span class="dot"></span><span title="Add your Supabase details to config.js to sign in and save across devices">Saved in this browser</span>`;
     } else if (!user) {
       w.innerHTML = `<span class="dot"></span><button class="ghost" id="acctIn">Sign in to save</button>`;
-      document.getElementById('acctIn').onclick = signIn;
+      document.getElementById('acctIn').onclick = () => signIn();
     } else {
       w.innerHTML = `<span class="dot on"></span><span title="Your projects and components sync to your account">${esc(user.email || 'Signed in')}</span><button class="ghost" id="acctOut">Sign out</button>`;
       document.getElementById('acctOut').onclick = () => sb.auth.signOut();
@@ -35,14 +35,95 @@ const Cloud = (() => {
       });
       widget();
       if (user) pull();
+      const bad = returnedWithError(); if (bad && !user) signIn('That didn’t sign you in: ' + bad);
     } catch (e) { console.warn('[reskin] Supabase not available:', e); }
   }
 
-  async function signIn() {
-    const email = prompt('Your email address — we’ll send you a sign-in link (no password needed):');
-    if (!email) return;
-    const { error } = await sb.auth.signInWithOtp({ email: email.trim(), options: { emailRedirectTo: location.origin + location.pathname } });
-    toast(error ? `Couldn’t send the link: ${error.message}` : 'Check your email and click the sign-in link', 6000);
+  // which ways in the project allows (Google shows up here by itself once it's switched on in Supabase)
+  let ways = null;
+  async function signInWays() {
+    if (ways) return ways;
+    try {
+      const r = await fetch(cfg.supabaseUrl + '/auth/v1/settings', { headers: { apikey: cfg.supabaseAnonKey } });
+      const d = await r.json(); ways = { google: !!(d.external && d.external.google) };
+    } catch { ways = { google: false }; }
+    return ways;
+  }
+  const back = () => location.origin + location.pathname;
+  const G_MARK = '<svg viewBox="0 0 48 48" width="18" height="18" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>';
+
+  // the sign-in sheet: Google (when it's on), or a link by email. Esc, ✕ or a click outside closes it.
+  async function signIn(note) {
+    let d = document.getElementById('signin');
+    if (!d) {
+      d = document.createElement('dialog'); d.id = 'signin'; d.className = 'signin'; d.setAttribute('aria-labelledby', 'siTitle');
+      document.body.appendChild(d);
+      d.addEventListener('click', e => { if (e.target === d) d.close(); });   // the backdrop
+    }
+    const w = await signInWays();
+    d.innerHTML = `
+      <button type="button" class="si-x icon" aria-label="Close">✕</button>
+      <div class="si-step" data-step="pick">
+        <h2 id="siTitle">Sign in to Reskin</h2>
+        <p class="si-sub">Keep your pages and components on every device. Everything still works without an account.</p>
+        ${note ? `<p class="si-err" role="alert">${esc(note)}</p>` : ''}
+        ${w.google ? `<button type="button" class="si-google">${G_MARK}<span>Continue with Google</span></button><div class="si-or"><span>or</span></div>` : ''}
+        <form class="si-form" novalidate>
+          <label for="siEmail">Email</label>
+          <input id="siEmail" type="email" autocomplete="email" inputmode="email" placeholder="you@example.com" aria-describedby="siErr" required>
+          <p class="si-err" id="siErr" role="alert" hidden></p>
+          <button type="submit" class="primary si-send">Email me a sign-in link</button>
+          <p class="si-fine">No password. We’ll email you a link that signs you in.</p>
+        </form>
+      </div>
+      <div class="si-step" data-step="sent" hidden>
+        <div class="si-mail" aria-hidden="true">✉</div>
+        <h2>Check your email</h2>
+        <p class="si-sub">We sent a sign-in link to <b class="si-to"></b>. Open it on this device and you’re in.</p>
+        <p class="si-err" id="siErr2" role="alert" hidden></p>
+        <div class="si-row"><button type="button" class="ghost si-again">Use a different email</button><button type="button" class="ghost si-resend" disabled>Send again</button></div>
+      </div>`;
+    const q = sel => d.querySelector(sel);
+    const err = (id, msg) => { const e = q('#' + id); e.textContent = msg || ''; e.hidden = !msg; };
+    q('.si-x').onclick = () => d.close();
+    if (w.google) q('.si-google').onclick = async () => {
+      const b = q('.si-google'); b.disabled = true; b.querySelector('span').textContent = 'Opening Google…';
+      // your work is saved in this browser, so leaving the page for Google loses nothing
+      const { error } = await sb.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: back() } });
+      if (error) { b.disabled = false; b.querySelector('span').textContent = 'Continue with Google'; err('siErr', `Google sign-in didn’t start: ${error.message}`); }
+    };
+    let to = '', cool = 0;
+    const send = async () => {
+      const { error } = await sb.auth.signInWithOtp({ email: to, options: { emailRedirectTo: back() } });
+      if (error) return error;
+      // sending again waits 30 s (Supabase limits how often a link can be sent)
+      const r = q('.si-resend'); let n = 30; r.disabled = true; r.textContent = 'Send again (30)'; clearInterval(cool);
+      cool = setInterval(() => { n--; r.textContent = n > 0 ? `Send again (${n})` : 'Send again'; if (n <= 0) { clearInterval(cool); r.disabled = false; } }, 1000);
+      return null;
+    };
+    q('.si-form').onsubmit = async e => {
+      e.preventDefault();
+      const input = q('#siEmail'), v = input.value.trim();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) { err('siErr', 'That doesn’t look like an email address.'); input.setAttribute('aria-invalid', 'true'); input.focus(); return; }
+      input.removeAttribute('aria-invalid'); err('siErr', '');
+      const b = q('.si-send'); b.disabled = true; b.textContent = 'Sending…'; to = v;
+      const error = await send();
+      b.disabled = false; b.textContent = 'Email me a sign-in link';
+      if (error) return err('siErr', `Couldn’t send the link: ${error.message}`);
+      q('.si-to').textContent = to; q('[data-step="pick"]').hidden = true; q('[data-step="sent"]').hidden = false; q('.si-again').focus();
+    };
+    q('.si-again').onclick = () => { q('[data-step="sent"]').hidden = true; q('[data-step="pick"]').hidden = false; q('#siEmail').focus(); };
+    q('.si-resend').onclick = async () => { const error = await send(); err('siErr2', error ? `Couldn’t send it again: ${error.message}` : ''); if (!error) toast('Sent again — check your email'); };
+    d.addEventListener('close', () => clearInterval(cool), { once: true });
+    if (!d.open) d.showModal();
+    (w.google ? q('.si-google') : q('#siEmail')).focus();
+  }
+  // back from Google (or an expired link) with an error in the address: say so in the sheet, and tidy the address
+  function returnedWithError() {
+    const p = new URLSearchParams(location.search.slice(1) + '&' + location.hash.replace(/^#/, ''));
+    const msg = p.get('error_description'); if (!msg) return null;
+    history.replaceState(null, '', location.pathname);
+    return msg;
   }
 
   // cloud → this browser (newer copy wins), then push anything only this browser has
