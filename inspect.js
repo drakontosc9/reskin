@@ -26,6 +26,7 @@ const TW_DROP = {
   fontSize: t => TW_SIZE.test(t),
   radius: t => /^rounded(-(none|sm|md|lg|xl|2xl|3xl|full|\[[^\]]+\]))?$/.test(t),
   pad: t => /^p[xytrbl]?-/.test(t),
+  blur: t => /^backdrop-blur(-|$)/.test(t),
 };
 function twToken(prop, v) {
   if (prop === 'color') return `text-[${v}]`;
@@ -33,6 +34,7 @@ function twToken(prop, v) {
   if (prop === 'fontSize') return { 12: 'text-xs', 14: 'text-sm', 16: 'text-base', 18: 'text-lg', 20: 'text-xl', 24: 'text-2xl', 30: 'text-3xl', 36: 'text-4xl', 48: 'text-5xl', 60: 'text-6xl' }[v] || `text-[${v}px]`;
   if (prop === 'radius') return v >= 999 ? 'rounded-full' : { 0: 'rounded-none', 2: 'rounded-sm', 4: 'rounded', 6: 'rounded-md', 8: 'rounded-lg', 12: 'rounded-xl', 16: 'rounded-2xl', 24: 'rounded-3xl' }[v] || `rounded-[${v}px]`;
   if (prop === 'pad') return v % 4 === 0 && v <= 64 ? `p-${v / 4}` : `p-[${v}px]`;
+  if (prop === 'blur') return +v ? `backdrop-blur-[${v}px]` : 'backdrop-blur-none';
 }
 // the new class takes the old one's place, so the list still reads the way its author wrote it
 function twSwap(cls, prop, v) {
@@ -41,32 +43,53 @@ function twSwap(cls, prop, v) {
   return keep.join(' ');
 }
 // the same edit as a style property (no classes to edit, or an SVG part)
-const STYLE_KEY = { color: 'color', bg: 'backgroundColor', fontSize: 'fontSize', radius: 'borderRadius', pad: 'padding', fill: 'fill', stroke: 'stroke', strokeWidth: 'strokeWidth' };
-const CSS_KEY = { color: 'color', bg: 'background-color', fontSize: 'font-size', radius: 'border-radius', pad: 'padding', fill: 'fill', stroke: 'stroke', strokeWidth: 'stroke-width' };
+const STYLE_KEY = { color: 'color', bg: 'backgroundColor', fontSize: 'fontSize', radius: 'borderRadius', pad: 'padding', fill: 'fill', stroke: 'stroke', strokeWidth: 'strokeWidth', blur: 'backdropFilter', bgImage: 'backgroundImage' };
+const CSS_KEY = { color: 'color', bg: 'background-color', fontSize: 'font-size', radius: 'border-radius', pad: 'padding', fill: 'fill', stroke: 'stroke', strokeWidth: 'stroke-width', blur: 'backdrop-filter', bgImage: 'background-image' };
 const PX = { fontSize: 1, radius: 1, pad: 1, strokeWidth: 1 };
-const cssVal = (prop, v) => PX[prop] ? v + 'px' : v;
+const cssVal = (prop, v) => prop === 'blur' ? (+v ? `blur(${v}px)` : 'none')
+  : prop === 'bgImage' ? (v ? `url('${String(v).replace(/["'\\]/g, encodeURIComponent)}')` : 'none')
+  : PX[prop] ? v + 'px' : v;
+// a picture as a background covers the part and stays centred (the way a hero photo behaves)
+const BG_FIT = [['backgroundSize', 'cover'], ['backgroundPosition', 'center']];
+
+/* ---- write style properties into a part's style={{…}}: added when there's none, wrapped when it's worked out in code ---- */
+function styleWrite(text, part, kv) {
+  // write strings the way this file does ('…' or "…")
+  const q = (text.match(/'/g) || []).length > (text.match(/"/g) || []).length ? "'" : '"';
+  const lit = v => q + String(v).split('\\').join('\\\\').split(q).join('\\' + q) + q;
+  const pairs = kv.map(([k, v]) => `${k}: ${lit(v)}`).join(', ');
+  if (!part.style) return splice(text, part.at, part.at, ` style={{ ${pairs} }}`);
+  if (part.style.dynamic) {   // style={someStyle}: keep what it works out, and put the change after it
+    if (part.style.s == null) throw new Error('its style is worked out in code');
+    return splice(text, part.style.s, part.style.e, `{ ...(${text.slice(part.style.s, part.style.e)}), ${pairs} }`);
+  }
+  const have = kv.map(([k, v]) => ({ k, v, at: part.style.props.find(p => p.k === k) }));
+  // new ones go at the end of the object first (it's later in the text), then the ones already there, last first
+  const add = have.filter(x => !x.at);
+  if (add.length) {
+    const inner = text.slice(part.style.s + 1, part.style.e - 1), body = inner.replace(/\s+$/, ''), at = part.style.s + 1 + body.length;
+    const ins = add.map(x => `${x.k}: ${lit(x.v)}`).join(', ');
+    text = !body.trim() ? splice(text, part.style.s + 1, part.style.e - 1, ` ${ins} `) : splice(text, at, at, (/,$/.test(body) ? ' ' : ', ') + ins);
+  }
+  have.filter(x => x.at).sort((a, b) => b.at.s - a.at.s).forEach(x => { text = splice(text, x.at.s, x.at.e, lit(x.v)); });
+  return text;
+}
 
 /* ---- edits on React source: returns the new source text, or throws a plain-words reason ---- */
 function tsxEdit(text, part, ed) {
   if (ed.t === 'text') { const x = part.texts[ed.i]; return splice(text, x.s, x.e, x.q ? ed.v.replace(/["\\]/g, '\\$&') : ed.v.replace(/[{}<>]/g, m => `{'${m}'}`)); }
   if (ed.t === 'lit') { const x = part.lits[ed.i]; return splice(text, x.s, x.e, x.kind === 'num' ? String(+ed.v) : ed.v); }
+  if (ed.t === 'src') { if (!part.src) throw new Error('its picture is worked out in code'); return splice(text, part.src.s, part.src.e, String(ed.v).replace(/["'`\\]/g, encodeURIComponent)); }
+  // a background picture always goes in its style (a picture address doesn't belong in a class name)
+  if (ed.t === 'look' && ed.prop === 'bgImage') {
+    const had = part.style && part.style.props && part.style.props.some(p => p.k === 'backgroundImage');
+    return styleWrite(text, part, [['backgroundImage', cssVal('bgImage', ed.v)], ...(ed.v && !had ? BG_FIT : [])]);
+  }
   if (ed.t === 'look') {
     const svgish = /^(path|circle|line|rect|ellipse|polygon|polyline|g|svg|text)$/.test(part.tag) || /^(fill|stroke|strokeWidth)$/.test(ed.prop);
     if (!svgish && part.cls && !part.cls.dynamic) return splice(text, part.cls.s, part.cls.e, twSwap(part.cls.v, ed.prop, ed.v));
     if (!svgish && !part.cls) return splice(text, part.at, part.at, ` className="${twToken(ed.prop, ed.v)}"`);
-    // write strings the way this file does ('…' or "…")
-    const q = (text.match(/'/g) || []).length > (text.match(/"/g) || []).length ? "'" : '"';
-    const key = STYLE_KEY[ed.prop], lit = q + String(cssVal(ed.prop, ed.v)).replace(new RegExp('[\\\\' + q + ']', 'g'), '\\$&') + q;
-    if (part.style && part.style.dynamic) throw new Error('its style is worked out in code');
-    if (part.style) {
-      const have = part.style.props.find(p => p.k === key);
-      if (have) return splice(text, have.s, have.e, lit);
-      const inner = text.slice(part.style.s + 1, part.style.e - 1), body = inner.replace(/\s+$/, '');
-      const at = part.style.s + 1 + body.length;
-      if (!body.trim()) return splice(text, part.style.s + 1, part.style.e - 1, ` ${key}: ${lit} `);
-      return splice(text, at, at, (/,$/.test(body) ? ' ' : ', ') + `${key}: ${lit}`);
-    }
-    return splice(text, part.at, part.at, ` style={{ ${key}: ${lit} }}`);
+    return styleWrite(text, part, [[STYLE_KEY[ed.prop], cssVal(ed.prop, ed.v)]]);
   }
   throw new Error('unknown change');
 }
@@ -90,7 +113,7 @@ function htmlRule(doc, el) {
   }
   return best;
 }
-const RULE_NAMES = { color: ['color'], bg: ['background-color', 'background'], fontSize: ['font-size'], radius: ['border-radius'], pad: ['padding'], fill: ['fill'], stroke: ['stroke'], strokeWidth: ['stroke-width'] };
+const RULE_NAMES = { color: ['color'], bg: ['background-color', 'background'], fontSize: ['font-size'], radius: ['border-radius'], pad: ['padding'], fill: ['fill'], stroke: ['stroke'], strokeWidth: ['stroke-width'], blur: ['backdrop-filter'], bgImage: ['background-image'] };
 function ruleEdit(r, prop, v) {
   const txt = r.st.textContent, block = txt.slice(r.s, r.e), val = cssVal(prop, v);
   for (const name of RULE_NAMES[prop]) {
@@ -116,6 +139,7 @@ function htmlEdit(code, part, ed) {
   if (!el) throw new Error('that part moved');
   if (ed.t === 'text') { const tn = [...el.childNodes].filter(x => x.nodeType === 3 && x.nodeValue.trim())[ed.i]; const lead = tn.nodeValue.match(/^\s*/)[0], trail = tn.nodeValue.match(/\s*$/)[0]; tn.nodeValue = lead + ed.v + trail; }
   else if (ed.t === 'lit') el.setAttribute(part.lits[ed.i].path, ed.v);
+  else if (ed.t === 'src') el.setAttribute('src', ed.v);
   else if (ed.t === 'look') { const r = htmlRule(doc, el); if (r) ruleEdit(r, ed.prop, ed.v); else el.style.setProperty(CSS_KEY[ed.prop], cssVal(ed.prop, ed.v)); }
   return htmlSerialize(doc, code);
 }
@@ -169,8 +193,36 @@ function insUndo(redo) {
 }
 
 /* ---- the panel ---- */
-const rgbHex = c => { const m = /rgba?\(([^)]+)\)/.exec(c || ''); if (!m) return /^#/.test(c || '') ? c : '#000000'; const [r, g, b] = m[1].split(/[ ,/]+/).map(Number); return '#' + [r, g, b].map(x => (x | 0).toString(16).padStart(2, '0')).join(''); };
-const transparent = c => !c || /rgba\([^)]*,\s*0\)$/.test(c) || c === 'transparent' || c === 'none';
+// any CSS colour the browser can paint (rgb, oklch and oklab from Tailwind 4, color(srgb …), names) → its red, green,
+// blue and alpha: paint one pixel and read it back
+function toRgba(c) {
+  if (!c || c === 'none') return null;
+  const x = toRgba.cx || (toRgba.cx = Object.assign(document.createElement('canvas'), { width: 1, height: 1 }).getContext('2d', { willReadFrequently: true }));
+  x.clearRect(0, 0, 1, 1); x.fillStyle = 'rgba(0,0,0,0)'; x.fillStyle = c; x.fillRect(0, 0, 1, 1);
+  const [r, g, b, a] = x.getImageData(0, 0, 1, 1).data; return { r, g, b, a: a / 255 };
+}
+const rgbHex = c => { const v = toRgba(c); return v ? '#' + [v.r, v.g, v.b].map(n => n.toString(16).padStart(2, '0')).join('') : '#000000'; };
+const transparent = c => { const v = toRgba(c); return !v || v.a === 0; };
+const alphaOf = c => { const v = toRgba(c); return v ? Math.round(v.a * 100) : 0; };
+const withAlpha = (hex, pct) => { const n = parseInt(hex.slice(1), 16); return `rgba(${n >> 16 & 255},${n >> 8 & 255},${n & 255},${Math.round(pct) / 100})`; };
+const blurOf = f => { const m = /blur\(([\d.]+)px\)/.exec(f || ''); return m ? +m[1] : 0; };
+const urlOf = b => { const m = /url\(["']?(.*?)["']?\)/.exec(b || ''); return m ? m[1] : ''; };
+// a picture from your computer, made small enough to live in the component's code (longest side 1600 px, JPEG)
+function pictureFile(cb) {
+  const i = document.createElement('input'); i.type = 'file'; i.accept = 'image/*';
+  i.onchange = () => {
+    const f = i.files[0]; if (!f) return;
+    const img = new Image(), u = URL.createObjectURL(f);
+    img.onload = () => {
+      const k = Math.min(1, 1600 / Math.max(img.width, img.height)), cv = Object.assign(document.createElement('canvas'), { width: Math.round(img.width * k), height: Math.round(img.height * k) });
+      cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height); URL.revokeObjectURL(u);
+      cb(cv.toDataURL(/png|svg|gif|webp/.test(f.type) ? 'image/png' : 'image/jpeg', .85));   // PNG keeps see-through parts
+    };
+    img.onerror = () => toast('That picture couldn’t be read');
+    img.src = u;
+  };
+  i.click();
+}
 function insRender() {
   const p = INS.panel; if (!p) return;
   const part = INS.map && INS.sel != null ? INS.map.find(x => x.n === INS.sel) : null, k = INS.pick;
@@ -189,14 +241,24 @@ function insRender() {
     ['strokeWidth', 'Line width', 'num', parseFloat(cs.strokeWidth) || 1, 0, 20, .5],
   ] : [
     ['color', 'Text colour', 'color', rgbHex(cs.color)],
-    ['bg', 'Background', 'color', transparent(cs.bg) ? '#ffffff' : rgbHex(cs.bg)],
+    ['bg', 'Background', 'color', transparent(cs.bg) ? '#ffffff' : rgbHex(cs.bg), 0, 0, 0, transparent(cs.bg) ? 'none' : null],
+    // how solid the background colour is: frosted glass is a light colour you can partly see through
+    ['bgAlpha', 'Background strength', 'num', alphaOf(cs.bg), 0, 100, 1, alphaOf(cs.bg) + '%'],
+    ['blur', 'Frost (glass blur)', 'num', Math.min(blurOf(cs.backdrop), 60), 0, 60, 1, blurOf(cs.backdrop) + 'px'],
     ['fontSize', 'Text size', 'num', parseFloat(cs.fontSize), 8, 96, 1],
     ['pad', 'Padding', 'num', parseFloat(cs.pad[0]), 0, 96, 1],
     ['radius', 'Corners', 'num', Math.min(parseFloat(cs.radius) || 0, 64), 0, 64, 1, parseFloat(cs.radius) >= 64 ? 'full' : null],
   ];
   const ctl = (id, label, type, v, min, max, step, shown) => type === 'color'
-    ? `<label class="ins-row"><span>${label}</span><input type="color" data-look="${id}" value="${v}"></label>`
+    ? `<label class="ins-row"><span>${label}</span><input type="color" data-look="${id}" value="${v}">${shown ? `<output>${shown}</output>` : ''}</label>`
     : `<label class="ins-row"><span>${label}</span><input type="range" data-look="${id}" min="${min}" max="${max}" step="${step}" value="${v}"><output>${shown || Math.round(v * 10) / 10}</output></label>`;
+  // a picture: the part's background picture, or (for a picture itself) which picture it shows
+  const bgUrl = urlOf(cs.bgImage), isImg = k.tag === 'img';
+  const pic = svg ? '' : isImg
+    ? `<div class="ins-sec"><h4>Picture</h4><div class="ins-pic"><span class="ins-thumb" style="background-image:url('${esc(k.cs.src || '')}')"></span><button type="button" class="ghost" data-pic="file">Choose a picture…</button></div>
+       <input class="ins-text" data-pic="url" placeholder="…or paste a picture’s web address" value="${esc(part.src && !/^data:/.test(part.src.v) ? part.src.v : '')}"></div>`
+    : `<div class="ins-sec"><h4>Background picture</h4><div class="ins-pic">${bgUrl ? `<span class="ins-thumb" style="background-image:url('${esc(bgUrl)}')"></span>` : '<span class="ins-thumb none">none</span>'}<button type="button" class="ghost" data-pic="file">Choose a picture…</button>${bgUrl ? '<button type="button" class="ghost" data-pic="none">Remove</button>' : ''}</div>
+       <input class="ins-text" data-pic="url" placeholder="…or paste a picture’s web address" value="${esc(/^data:/.test(bgUrl) ? '' : bgUrl)}"></div>`;
   const litCtl = (x, i) => x.kind === 'color'
     ? `<label class="ins-row"><span title="${esc(x.path)}">${esc(x.path)}</span><input type="color" data-lit="${i}" value="${/^#[0-9a-f]{6}$/i.test(x.raw) ? x.raw : rgbHex(x.raw)}"></label>`
     : `<label class="ins-row"><span title="${esc(x.path)}">${esc(x.path)}</span><input type="number" data-lit="${i}" value="${esc(x.raw)}" step="any"></label>`;
@@ -205,7 +267,9 @@ function insRender() {
       <small>&lt;${esc(part.tag)}&gt;${part.comp ? ` in ${esc(part.comp)}` : ''}${k.count > 1 ? ' · changes all of them' : ''}${part.rule ? ` · look changes every ${esc(part.rule)}` : ''}</small></div>
     ${(k.places || []).length > 1 ? `<div class="ins-places" role="radiogroup" aria-label="What to change">${k.places.map(n => { const q = INS.map.find(x => x.n === n); if (!q) return ''; const lbl = q.use && n === k.places[0] ? `This ${q.tag}` : `Inside ${q.comp || q.tag} · everywhere`; return `<button role="radio" aria-checked="${n === part.n}" class="${n === part.n ? 'on' : ''}" data-place="${n}">${esc(lbl)}</button>`; }).join('')}</div>` : ''}
     ${part.texts.length ? `<div class="ins-sec"><h4>Words</h4>${part.texts.map((x, i) => `<input class="ins-text" data-text="${i}" value="${esc(x.v)}">`).join('')}</div>` : ''}
+    ${k.cs.up ? '<button type="button" class="ghost ins-up" data-up title="Select the part around this one (↑)">↑ The part around it</button>' : ''}
     <div class="ins-sec"><h4>Look <small>→ ${where}</small></h4>${look.map(l => ctl(...l)).join('')}</div>
+    ${pic}
     ${part.lits.length ? `<div class="ins-sec"><h4>From its code</h4>${part.lits.map(litCtl).join('')}</div>` : ''}
     ${sets}
     <details class="ins-sec ins-code"><summary>Show its code</summary><pre></pre></details>
@@ -231,11 +295,30 @@ function insWire(part) {
   if (!part) return;
   p.querySelectorAll('[data-place]').forEach(b => b.onclick = () => insPost({ rkInspectSelect: +b.dataset.place }));
   p.querySelectorAll('[data-text]').forEach(inp => inp.onchange = () => { const v = inp.value.trim(); if (v) insApply({ t: 'text', i: +inp.dataset.text, v }, `words → “${v.slice(0, 30)}”`); });
+  // the background is one colour with a strength: the colour picker keeps the strength, the strength keeps the colour
+  const bgIn = p.querySelector('[data-look="bg"]'), aIn = p.querySelector('[data-look="bgAlpha"]');
+  const bgNow = () => !aIn || +aIn.value >= 100 ? bgIn.value : withAlpha(bgIn.value, +aIn.value);
+  const UNIT = { bgAlpha: '%', blur: 'px' }, SAY = { bg: 'background', bgAlpha: 'background strength', blur: 'frost', radius: 'corners', pad: 'padding', fontSize: 'text size', color: 'text colour' };
   p.querySelectorAll('[data-look]').forEach(inp => {
     const prop = inp.dataset.look, out = inp.nextElementSibling;
-    inp.oninput = () => { if (out && out.tagName === 'OUTPUT') out.textContent = inp.value; insPost({ rkInspectPreview: { n: INS.sel, css: { [CSS_KEY[prop]]: cssVal(prop, inp.value) } } }); };
-    inp.onchange = () => insApply({ t: 'look', prop, v: inp.type === 'range' ? +inp.value : inp.value }, `${prop} → ${inp.value}`);
+    const edit = () => {
+      // a colour picked for a part with no background starts fully solid (strength 0 would hide it)
+      if (prop === 'bg' && aIn && +aIn.value === 0) { aIn.value = 100; if (aIn.nextElementSibling) aIn.nextElementSibling.textContent = '100%'; }
+      return prop === 'bg' || prop === 'bgAlpha' ? { prop: 'bg', v: bgNow() } : { prop, v: inp.type === 'range' ? +inp.value : inp.value };
+    };
+    inp.oninput = () => {
+      if (out && out.tagName === 'OUTPUT') out.textContent = inp.value + (UNIT[prop] || '');
+      if (prop === 'bgAlpha' && bgIn && +inp.value > 0 && bgIn.nextElementSibling && bgIn.nextElementSibling.tagName === 'OUTPUT') bgIn.nextElementSibling.remove();
+      const e = edit(); insPost({ rkInspectPreview: { n: INS.sel, css: { [CSS_KEY[e.prop]]: cssVal(e.prop, e.v), ...(e.prop === 'blur' ? { '-webkit-backdrop-filter': cssVal('blur', e.v) } : {}) } } });
+    };
+    inp.onchange = () => { const e = edit(); insApply({ t: 'look', prop: e.prop, v: e.v }, `${SAY[prop] || prop} → ${inp.value}${UNIT[prop] || ''}`); };
   });
+  const up = p.querySelector('[data-up]'); if (up) up.onclick = () => insPost({ rkInspectUp: true });
+  // pictures: from a file, a web address, or none
+  const setPic = (v, what) => part.tag === 'img' || (INS.pick && INS.pick.tag === 'img') ? insApply({ t: 'src', v }, what) : insApply({ t: 'look', prop: 'bgImage', v }, what);
+  const pf = p.querySelector('[data-pic="file"]'); if (pf) pf.onclick = () => pictureFile(u => setPic(u, 'picture → your file'));
+  const pn = p.querySelector('[data-pic="none"]'); if (pn) pn.onclick = () => setPic('', 'background picture → none');
+  const pu = p.querySelector('[data-pic="url"]'); if (pu) pu.onchange = () => { const v = pu.value.trim(); if (v) setPic(v, `picture → ${v.slice(0, 40)}`); };
   p.querySelectorAll('[data-lit]').forEach(inp => inp.onchange = () => { const x = part.lits[+inp.dataset.lit]; insApply({ t: 'lit', i: +inp.dataset.lit, v: inp.value }, `${x.path} → ${inp.value}`); });
 }
 addEventListener('keydown', e => {

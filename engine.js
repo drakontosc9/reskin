@@ -844,7 +844,9 @@ function __runner() {
   try {
     var old = document.getElementById('root'), fresh = document.createElement('div'); fresh.id = 'root'; old.replaceWith(fresh);
     var K = __shims(window.React);
-    var out = Babel.transform(window.__CODE__, { filename: 'Component.tsx', presets: [['typescript', { isTSX: true, allExtensions: true }], ['react', { runtime: 'classic' }]], plugins: ['transform-modules-commonjs'] }).code;
+    // inspecting: tag the parts here too (same source, same numbers), or a component that fell back to stand-ins has nothing to click
+    var plugins = ['transform-modules-commonjs']; if (window.__RK_INSPECT && window.__rkTagPlugin) plugins.unshift(window.__rkTagPlugin);
+    var out = Babel.transform(window.__CODE__, { filename: 'Component.tsx', presets: [['typescript', { isTSX: true, allExtensions: true }], ['react', { runtime: 'classic' }]], plugins: plugins }).code;
     var module = { exports: {} };
     (new Function('require', 'module', 'exports', 'React', out))(K.load, module, module.exports, window.React);
     __rkMount(module.exports, null);
@@ -895,8 +897,10 @@ function __rkTagPlugin(babel) {
     var hint = ['aria-label', 'title', 'alt', 'placeholder', 'id', 'role'].map(function (k) { var v = val(attr(node, k)); return v && v.type === 'StringLiteral' ? v.value : ''; }).filter(Boolean)[0];
     if (hint) entry.hint = hint;
     var ca = attr(node, 'className') || attr(node, 'class'); if (ca) entry.cls = classes(ca);
+    // a picture's address, when it's written in the code: it can be swapped for another picture
+    if (tag === 'img') { var sv = str(val(attr(node, 'src'))); if (sv) entry.src = { s: sv.start + 1, e: sv.end - 1, v: sv.type === 'StringLiteral' ? sv.value : sv.quasis[0].value.raw }; }
     if (st && st.type === 'ObjectExpression') entry.style = { s: st.start, e: st.end, props: st.properties.filter(function (x) { return x.type === 'ObjectProperty' && !x.computed; }).map(function (x) { return { k: x.key.name || x.key.value, s: x.value.start, e: x.value.end }; }) };
-    else if (st) entry.style = { dynamic: true };
+    else if (st) entry.style = { dynamic: true, s: st.start, e: st.end };   // style={someStyle}: a change wraps it, { ...(someStyle), color: … }
     var L = []; node.attributes.forEach(function (a) { if (a.type === 'JSXAttribute' && a.name && typeof a.name.name === 'string' && !/^(className|class|key|style|tabIndex|id|role|aria-.*|data-.*)$/.test(a.name.name)) lits(val(a), a.name.name, L, 0); });
     lits(st, 'style', L, 0); entry.lits = L;
     var el = p.parentPath.node, T = [];
@@ -949,7 +953,7 @@ function __rkInspect() {
     var kind = { button: 'Button', a: 'Link', nav: 'Navigation', ul: 'List', li: 'List item', img: 'Picture', svg: 'Drawing', path: 'Shape', circle: 'Circle', line: 'Line', rect: 'Rectangle', g: 'Group', text: 'Label', input: 'Field', h1: 'Heading', h2: 'Heading', h3: 'Heading', p: 'Text', span: 'Text', section: 'Section', header: 'Header', footer: 'Footer' }[tag] || 'Box';
     return t ? kind + ' · ' + t.replace(/\s+/g, ' ').slice(0, 28) : kind;
   }
-  function snap(el) { var c = getComputedStyle(el); return { color: c.color, bg: c.backgroundColor, fontSize: c.fontSize, fontWeight: c.fontWeight, pad: [c.paddingTop, c.paddingRight, c.paddingBottom, c.paddingLeft], radius: c.borderTopLeftRadius, opacity: c.opacity, fill: c.fill, stroke: c.stroke, strokeWidth: c.strokeWidth }; }
+  function snap(el) { var c = getComputedStyle(el); return { color: c.color, bg: c.backgroundColor, fontSize: c.fontSize, fontWeight: c.fontWeight, pad: [c.paddingTop, c.paddingRight, c.paddingBottom, c.paddingLeft], radius: c.borderTopLeftRadius, opacity: c.opacity, fill: c.fill, stroke: c.stroke, strokeWidth: c.strokeWidth, backdrop: c.backdropFilter || c.webkitBackdropFilter || 'none', bgImage: c.backgroundImage, src: el.tagName === 'IMG' ? el.currentSrc || el.src : '', up: !!partOf(el.parentElement) }; }
   function draw() {
     layer.innerHTML = '';
     [hovered && hovered !== pinned ? hovered : null, pinned].forEach(function (el, k) {
@@ -993,6 +997,7 @@ function __rkInspect() {
   addEventListener('message', function (e) {
     var d = e.data || {};
     if ('rkInspectSelect' in d) { var tries = 0; (function find() { var el = d.rkInspectSelect == null ? null : all(d.rkInspectSelect)[0]; if (el || d.rkInspectSelect == null || tries++ > 30) { pin(el || null, true); focusId = d.rkInspectSelect; pin(el || null); } else setTimeout(find, 150); })(); }
+    if (d.rkInspectUp && pinned) { var up2 = partOf(pinned.parentElement); if (up2) pin(up2); }   // the panel's "the part around it"
     if (d.rkInspectPreview) { var pv = d.rkInspectPreview; all(pv.n).forEach(function (el) { for (var k in pv.css) el.style.setProperty(k, pv.css[k], 'important'); }); draw(); }
   });
   // the app needs the part map (TSX: made by the compiler; it may finish after this runs)

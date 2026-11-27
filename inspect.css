@@ -13,7 +13,7 @@
 .ins-places button.on{border-color:var(--accent);color:#fff;background:#2a1f1b}
 .ins-sec h4{margin:0 0 8px;font:500 11px/1 'JetBrains Mono',monospace;letter-spacing:.1em;text-transform:uppercase;color:var(--accent)}
 .ins-sec h4 small{letter-spacing:0;text-transform:none;margin-left:4px}
-.ins-row{display:grid;grid-template-columns:96px 1fr auto;gap:8px;align-items:center;margin:6px 0;color:#cfcac2;font-size:12.5px}
+.ins-row{display:grid;grid-template-columns:132px 1fr auto;gap:8px;align-items:center;margin:6px 0;color:#cfcac2;font-size:12.5px}
 .ins-row span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ins-row input[type=range]{width:100%;accent-color:var(--accent)}
 .ins-row input[type=color]{width:44px;height:26px;border:1px solid #3a3835;border-radius:6px;background:none;padding:2px;grid-column:2/4;justify-self:start;cursor:pointer}
@@ -29,3 +29,10 @@
 .cv-remove:hover,.cv-remove:focus-visible{color:#b2341a;border-color:#b2341a}
 #cvInspect.on{background:var(--ink);color:#fff;border-color:var(--ink)}
 @media (max-width:900px){.cv-main .bx-frame.ins-on{grid-template-columns:minmax(0,1fr);grid-template-rows:420px auto;height:auto}.ins-panel{border-left:0;border-top:1px solid #2a2826}}
+/* a colour with a note beside it ("none"); the part around it; pictures */
+.ins-row:has(output) input[type=color]{grid-column:2/3}
+.ins-up{width:100%;margin:2px 0 12px;justify-content:center;font-weight:600}
+.ins-pic{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+.ins-thumb{width:52px;height:36px;border-radius:6px;border:1px solid #3a3835;background:#1f1d1b center/cover no-repeat;flex:none}
+.ins-thumb.none{display:grid;place-items:center;color:#8f8a83;font:11px 'JetBrains Mono',monospace}
+.ins-pic .ghost{height:32px;padding:0 10px;font-size:12.5px}
