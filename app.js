@@ -293,8 +293,8 @@ async function setView(v) {
 }
 
 function renderChips() {
-  const chips = [...(state.tgt && state.tgt.tokens ? [['target', `✦ Like ${state.tgt.name}`]] : []), ['all', 'All styles'], ...ARCH_IDS.map(id => [id, ARCH[id].label])];
-  $('chips').innerHTML = chips.map(([id, l]) => `<button data-mood="${id}" class="${state.mood === id ? 'on' : ''} ${id === 'target' ? 'tg' : ''}">${esc(l)}</button>`).join('');
+  const chips = [...(state.tgt && state.tgt.tokens ? [['target', `Like ${state.tgt.name}`]] : []), ['all', 'All styles'], ...ARCH_IDS.map(id => [id, ARCH[id].label])];
+  $('chips').innerHTML = chips.map(([id, l]) => `<button data-mood="${id}" class="${state.mood === id ? 'on' : ''} ${id === 'target' ? 'tg' : ''}">${id === 'target' ? ic('sparkles') + ' ' : ''}${esc(l)}</button>`).join('');
 }
 
 const ICON_HEART = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 20s-7-4.4-9.2-9A5 5 0 0 1 12 6a5 5 0 0 1 9.2 5C19 15.6 12 20 12 20z"/></svg>';
@@ -307,7 +307,7 @@ function tile(s) {
   const p = s.pal;
   const acc = s.live && s.recolor && brandColor() ? Cx.css(brandColor()) : p.accent;
   const sw = [p.bg, p.surface, acc, p.text].map(c => `<i style="background:${c}"></i>`).join('');
-  el.innerHTML = `<div class="thumb">${s.live ? '<span class="badge">✦ Animated · keeps its effects</span>' : s.exact ? '<span class="badge">Closest static match</span>' : ''}<div class="hov"><span>Preview</span></div></div>
+  el.innerHTML = `<div class="thumb">${s.live ? '<span class="badge">' + ic('sparkles') + ' Animated · keeps its effects</span>' : s.exact ? '<span class="badge">Closest static match</span>' : ''}<div class="hov"><span>Preview</span></div></div>
     <div class="meta"><div class="txt"><h3>${esc(s.name)}</h3><p>${esc(s.label)} · ${esc(s.fontLabel)}</p></div>
     <div class="sw">${sw}</div>
     <button class="icon var" title="More like this">${ICON_VAR}</button>
@@ -364,7 +364,7 @@ function renderGrid() {
     $('banner').innerHTML = `<h2>Saved styles</h2><span class="found">Applied to the site you pasted</span>`;
     $('chips').style.display = 'none';
     $('moreWrap').style.display = 'none';
-    if (!list.length) g.innerHTML = '<div class="empty">No saved styles yet — tap the ♡ on any style you like.</div>';
+    if (!list.length) g.innerHTML = '<div class="empty">No saved styles yet — tap the heart on any style you like.</div>';
   } else {
     list = state.styles;
     $('chips').style.display = '';
@@ -811,7 +811,7 @@ function renderComps() {
     t.innerHTML = `<div class="cthumb"><span class="src">${esc(c.source)}</span></div>
       <div class="cmeta"><b title="${esc(c.name)}">${esc(c.name)}</b>${c.note ? `<span class="note">${esc(c.note)}</span>` : ''}
         <div class="row"><select data-move>${colls.map(n => `<option ${n === c.collection ? 'selected' : ''}>${esc(n)}</option>`).join('')}<option value="__new">+ New…</option></select>
-        <button class="ghost" data-use>Use as design</button><button class="icon" data-del title="Remove from Library" aria-label="Remove ${esc(c.name)} from Library">✕</button></div></div>`;
+        <button class="ghost" data-use>Use as design</button><button class="icon" data-del title="Remove from Library" aria-label="Remove ${esc(c.name)} from Library">${ic('x')}</button></div></div>`;
     const f = document.createElement('iframe');
     f.setAttribute('sandbox', 'allow-scripts'); f.setAttribute('tabindex', '-1'); f.setAttribute('loading', 'lazy');
     f.srcdoc = compThumbDoc(c);
@@ -921,7 +921,7 @@ function openModal(s) {
   state.current = s;
   $('mName').textContent = s.name;
   $('mInfo').textContent = `${s.label} · ${s.fontLabel}`;
-  $('mSave').textContent = isSaved(s) ? 'Saved ♥' : 'Save ♡';
+  $('mSave').innerHTML = saveLabel(isSaved(s));
   $('modal').hidden = false;
   document.body.style.overflow = 'hidden';
   setModalDoc(renderSite(viewModel(), s, { preview: true, base: state.base }), s);
@@ -929,6 +929,8 @@ function openModal(s) {
 function closeModal() { $('modal').hidden = true; document.body.style.overflow = ''; $('mStage').replaceChildren(); }
 const fullHtml = () => state.current && state.current._built ? composeDoc({}) : renderSite(viewModel(), state.current, { base: state.base });
 const slug = s => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+// the Save button: an outline heart, filled once it's saved
+const saveLabel = (on, long) => on ? `${ic('heart', 'ic-on')} Saved` : `${ic('heart')} ${long ? 'Save this style' : 'Save'}`;
 function renderHearts() {
   const list = state.view === 'saved' ? state.saved : state.styles;
   [...document.querySelectorAll('.tile')].forEach((t, i) => list[i] && t.querySelector('.heart').classList.toggle('on', isSaved(list[i])));
@@ -936,7 +938,7 @@ function renderHearts() {
 $('mClose').onclick = closeModal;
 $('modal').onclick = e => { if (e.target === $('modal')) closeModal(); };
 $('mVar').onclick = () => { const s = state.current; closeModal(); showVariations(s); };
-$('mSave').onclick = () => { toggleSave(state.current); $('mSave').textContent = isSaved(state.current) ? 'Saved ♥' : 'Save ♡'; renderHearts(); };
+$('mSave').onclick = () => { toggleSave(state.current); $('mSave').innerHTML = saveLabel(isSaved(state.current)); renderHearts(); };
 $('mCopy').onclick = async () => {
   try { await navigator.clipboard.writeText(fullHtml()); toast('HTML copied to clipboard'); }
   catch { const ta = document.createElement('textarea'); ta.value = fullHtml(); document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); toast('HTML copied'); }

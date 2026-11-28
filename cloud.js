@@ -77,7 +77,7 @@ const Cloud = (() => {
         </form>
       </div>
       <div class="si-step" data-step="sent" hidden>
-        <div class="si-mail" aria-hidden="true">✉</div>
+        <div class="si-mail" aria-hidden="true">${ic('mail')}</div>
         <h2>Check your email</h2>
         <p class="si-sub">We sent a sign-in link to <b class="si-to"></b>. Open it on this device and you’re in.</p>
         <p class="si-err" id="siErr2" role="alert" hidden></p>

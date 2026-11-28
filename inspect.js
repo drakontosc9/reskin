@@ -226,7 +226,7 @@ function pictureFile(cb) {
 function insRender() {
   const p = INS.panel; if (!p) return;
   const part = INS.map && INS.sel != null ? INS.map.find(x => x.n === INS.sel) : null, k = INS.pick;
-  const hist = `<div class="ins-hist"><button class="ghost" id="insUndo" ${INS.undo.length ? '' : 'disabled'} title="Undo (Ctrl+Z)">↶ Undo</button><button class="ghost" id="insRedo" ${INS.redo.length ? '' : 'disabled'}>↷ Redo</button>${INS.undo.length ? `<small>${INS.undo.length} change${INS.undo.length > 1 ? 's' : ''} in its code</small>` : ''}</div>`;
+  const hist = `<div class="ins-hist"><button class="ghost" id="insUndo" ${INS.undo.length ? '' : 'disabled'} title="Undo (Ctrl+Z)">${ic('rotate-ccw')} Undo</button><button class="ghost" id="insRedo" ${INS.redo.length ? '' : 'disabled'}>${ic('rotate-cw')} Redo</button>${INS.undo.length ? `<small>${INS.undo.length} change${INS.undo.length > 1 ? 's' : ''} in its code</small>` : ''}</div>`;
   // the component's own settings (a lens's blur, bevel, logo…): what can't be clicked — drawn on a canvas, worked out
   // in code — is usually one of these
   const P = c_kindTsx() && typeof parseProps === 'function' ? parseProps(compById(INS.compId)) : null, hasSet = !!(P && P.fields.length);

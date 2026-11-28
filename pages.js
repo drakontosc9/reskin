@@ -65,12 +65,12 @@ const sec = o => { const s = { title: '', intro: [], cards: [], lists: [], imgs:
 const card = (title, ...text) => ({ title, text, img: null, buttons: [] });
 const hero = (eyebrow, title, para, buttons) => ({ eyebrow, title, paras: para ? [para] : [], buttons: buttons || [], img: null, stats: [] });
 const PRESETS = [
-  ['blank', 'Blank', 'Just a heading — add components to it', '▢'],
-  ['about', 'About', 'Your story, what you care about, a way to get in touch', '☺'],
-  ['contact', 'Contact', 'A form and the ways to reach you', '✉'],
-  ['pricing', 'Pricing', 'Three plans and common questions', '$'],
-  ['faq', 'Questions', 'Questions people ask, with answers', '?'],
-  ['copy', 'Copy of this page', 'Starts as the page you’re on, changes and all', '⧉'],
+  ['blank', 'Blank', 'Just a heading — add components to it', ic('file')],
+  ['about', 'About', 'Your story, what you care about, a way to get in touch', ic('users')],
+  ['contact', 'Contact', 'A form and the ways to reach you', ic('mail')],
+  ['pricing', 'Pricing', 'Three plans and common questions', ic('dollar-sign')],
+  ['faq', 'Questions', 'Questions people ask, with answers', ic('circle-question-mark')],
+  ['copy', 'Copy of this page', 'Starts as the page you’re on, changes and all', ic('copy')],
 ];
 function siteContacts(m) {
   const links = [m.navCta, ...m.nav, ...m.footerLinks, ...m.hero.buttons, ...m.sections.flatMap(s => s.buttons)].filter(l => l && l.href);
@@ -138,7 +138,7 @@ function pageMenu(id, x, y) {
     saveProject(); renderEditorWs(); toastUndo(`Renamed to “${pg.name}”`, () => pagesRestore(snap));
   } }];
   if (pg.id !== HOME) {
-    items.push({ label: pg.inNav === false ? 'Show it in the menu' : 'Leave it out of the menu', icon: pg.inNav === false ? '☰' : '◌', run: () => {
+    items.push({ label: pg.inNav === false ? 'Show it in the menu' : 'Leave it out of the menu', icon: ic(pg.inNav === false ? 'menu' : 'eye-off'), run: () => {
       const snap = pagesSnap(p); pg.inNav = pg.inNav === false; saveProject(); renderStudioPreview();
       toastUndo(pg.inNav ? `“${pg.name}” is in your menu` : `“${pg.name}” isn’t in your menu any more (it still downloads)`, () => pagesRestore(snap));
     } });

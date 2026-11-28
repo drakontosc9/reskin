@@ -51,10 +51,10 @@ function renderLibrary() {
     B.compSel = LIB.detail;
     const c = compById(LIB.detail), fz = frozenInfo(c);
     if (fz) {
-      $('libDetail').insertAdjacentHTML('beforebegin', `<div class="frozen-help"><b>❄ This is a still snapshot.</b> ${esc(fz.why)} It looks right, but clicks, hovers and animations that need its code won’t run.
+      $('libDetail').insertAdjacentHTML('beforebegin', `<div class="frozen-help"><b>${ic('cloud-snow')} This is a still snapshot.</b> ${esc(fz.why)} It looks right, but clicks, hovers and animations that need its code won’t run.
         <ol><li>Open its page${fz.from ? ` (<a href="${esc(fz.from)}" target="_blank" rel="noopener">${esc(new URL(fz.from).hostname + new URL(fz.from).pathname)}</a>)` : ''} and use its <b>Code</b> / <b>Copy</b> button to copy the component’s code (React / TSX / JSX).</li>
         <li>Paste it here — Reskin runs it, with its packages (motion, gsap, three…), and it replaces this snapshot everywhere it’s used.</li></ol>
-        <div class="bx-row">${fz.from ? `<button class="ghost" id="fzOpen">Open its page ↗</button>` : ''}<button class="primary" id="fzPaste">Paste its code</button></div>
+        <div class="bx-row">${fz.from ? `<button class="ghost" id="fzOpen">Open its page ${ic('square-arrow-out-up-right')}</button>` : ''}<button class="primary" id="fzPaste">Paste its code</button></div>
         <textarea id="fzCode" hidden spellcheck="false" placeholder="Paste the component’s code here — one file, or all its files at once (21st.dev’s “Copy all files”). TSX / JSX, or HTML with its CSS."></textarea>
         <div class="bx-row" id="fzRow" hidden><button class="primary" id="fzSave">Replace the snapshot with this code</button><span class="found" id="fzMsg"></span></div></div>`);
       if ($('fzOpen')) $('fzOpen').onclick = () => window.open(fz.from, '_blank', 'noopener');
@@ -76,7 +76,7 @@ function renderLibrary() {
     renderCompView();
     if (parseProps(c) && parseProps(c).fields.length) {
       const sec = document.createElement('div'); sec.className = 'bx-panel pp-panel';
-      sec.innerHTML = `<div class="bx-h"><h3>⚙ Settings <small>· used everywhere this component appears</small></h3></div><div class="bx-pad" id="ppBox"></div>`;
+      sec.innerHTML = `<div class="bx-h"><h3>${ic('settings')} Settings <small>· used everywhere this component appears</small></h3></div><div class="bx-pad" id="ppBox"></div>`;
       $('libDetail').prepend(sec);
       renderPropsPanel($('ppBox'), c, null, () => renderCompView());
     }
@@ -87,7 +87,7 @@ function renderLibrary() {
     <div class="lib-head"><h2>Library</h2>
       <div class="chips">${[['all', 'Everything'], ['styles', `Styles <small>${nS}</small>`], ['components', `Components <small>${nC}</small>`]].map(([k, l]) => `<button data-lf="${k}" class="${LIB.filter === k ? 'on' : ''}">${l}</button>`).join('')}</div>
       <span class="sp"></span>
-      <button class="ghost" id="libGrab" title="Open a saved page and click the part you want">✂ Grab from a page</button>
+      <button class="ghost" id="libGrab" title="Open a saved page and click the part you want">${ic('scissors')} Grab from a page</button>
       <button class="ghost" id="libIcons" title="A .zip of SVG icons">Import icons (.zip)</button>
     </div>
     <section class="lib-sec" id="libStylesSec" ${LIB.filter === 'components' ? 'hidden' : ''}><h3>Styles you saved</h3><div class="grid lib-grid" id="libStyles"></div></section>
@@ -98,7 +98,7 @@ function renderLibrary() {
   $('libIcons').onclick = () => { const i = document.createElement('input'); i.type = 'file'; i.accept = '.zip'; i.onchange = () => i.files[0] && importIconZip(i.files[0]); i.click(); };
   // styles
   const g = $('libStyles');
-  if (!nS) g.innerHTML = '<div class="empty">No saved styles yet. Tap ♡ on a style in Studio’s filmstrip.</div>';
+  if (!nS) g.innerHTML = '<div class="empty">No saved styles yet. Save one from Studio’s filmstrip and it shows here.</div>';
   state.saved.forEach(s => {
     const t = tile(s);
     const use = document.createElement('button'); use.className = 'primary lib-use'; use.textContent = s.live ? 'Preview' : 'Use in Studio';
@@ -121,7 +121,7 @@ function libraryPatchComps() {
     const c = shown[i]; if (!c) return;
     ensureLibs(c, () => { if (state.view === 'library') renderComps(); });
     const fz = frozenInfo(c);
-    if (fz && !t.querySelector('.frozen-tag')) t.querySelector('.cthumb').insertAdjacentHTML('beforeend', `<span class="frozen-tag" title="${esc(fz.why)}">❄ Snapshot — doesn’t react</span>`);
+    if (fz && !t.querySelector('.frozen-tag')) t.querySelector('.cthumb').insertAdjacentHTML('beforeend', `<span class="frozen-tag" title="${esc(fz.why)}">${ic('cloud-snow')} Snapshot — doesn’t react</span>`);
     const on = LIB.cat === 'all' || compCat(c) === LIB.cat;
     t.hidden = !on; if (on) visible++;
     if (!t.querySelector('.cat-tag')) t.querySelector('.cthumb').insertAdjacentHTML('beforeend', `<span class="cat-tag">${esc(catName(compCat(c)))}</span>`);
@@ -152,30 +152,30 @@ function libraryPatchComps() {
 /* ---- components sort themselves into categories (like 21st.dev's sidebar) ---- */
 // [key, name, glyph, words in its name / link, things in its code]
 const CATS = [
-  ['icons', 'Icons', '◇', null, null],
-  ['nav', 'Navigation Menus', '☰', /\b(nav|navbar|navigation|menu|header|dock|sidebar|breadcrumb)/, /<nav\b|role="navigation"/],
-  ['footers', 'Footers', '▁', /\bfooter/, /<footer\b/],
-  ['heroes', 'Heroes', '▣', /\b(hero|landing|banner|splash)/, null],
-  ['pricing', 'Pricing Sections', '$', /(pric|plans?\b|billing|subscri|checkout|payment)/, /\/\s?mo\b|per month|\/month|billed (yearly|monthly)/],
-  ['cta', 'Calls to Action', '➜', /\b(cta|call.to.action|get.started|sign.?up|newsletter|waitlist|join)/, null],
-  ['features', 'Features', '✦', /\b(feature|benefit|bento|how.it.works)/, null],
-  ['testimonials', 'Testimonials', '❝', /(testimonial|review|quote)/, /<blockquote\b/],
-  ['faq', 'FAQs', '?', /\b(faq|accordion|question)/, /<details\b/],
-  ['galleries', 'Galleries', '▦', /(gallery|carousel|slider|slideshow|lightbox)/, null],
-  ['marquees', 'Marquees & Logos', '⇢', /(marquee|ticker|logo.?cloud|clients|logos)/, /@keyframes[^{]*(marquee|scroll|ticker)/],
-  ['stats', 'Stats & KPIs', '▲', /\b(stats?|kpi|metric|counter|dashboard|chart|analytics)/, null],
-  ['backgrounds', 'Backgrounds', '▒', /(background|gradient|shader|aurora|particles|noise|beams|spotlight)/, /<canvas\b/],
-  ['buttons', 'Buttons', '⬭', /\b(button|btn)/, null],
-  ['cards', 'Cards', '▭', /\bcards?\b/, null],
-  ['forms', 'Forms & Inputs', '✎', /\b(form|input|search|login|sign.?in|contact|textarea|otp)/, /<form\b/],
-  ['toggles', 'Toggles & Checkboxes', '◉', /(toggle|switch|checkbox|radio)/, /type="?(checkbox|radio)/],
-  ['loaders', 'Loaders', '◌', /(loader|loading|spinner|progress|skeleton)/, null],
-  ['dialogs', 'Dialogs & Popups', '◳', /(modal|dialog|popup|popover|tooltip|toast|drawer|sheet)/, /<dialog\b|role="dialog"/],
-  ['tabs', 'Tabs', '⊟', /\b(tabs?|segmented)\b/, /role="tablist"/],
-  ['badges', 'Badges & Tags', '●', /\b(badge|chip|tag|pill)s?\b/, null],
-  ['files', 'Files & Folders', '🗀', /(folder|files?\b|upload|dropzone)/, null],
+  ['icons', 'Icons', ic('star'), null, null],
+  ['nav', 'Navigation Menus', ic('menu'), /\b(nav|navbar|navigation|menu|header|dock|sidebar|breadcrumb)/, /<nav\b|role="navigation"/],
+  ['footers', 'Footers', ic('panel-bottom'), /\bfooter/, /<footer\b/],
+  ['heroes', 'Heroes', ic('panel-top'), /\b(hero|landing|banner|splash)/, null],
+  ['pricing', 'Pricing Sections', ic('dollar-sign'), /(pric|plans?\b|billing|subscri|checkout|payment)/, /\/\s?mo\b|per month|\/month|billed (yearly|monthly)/],
+  ['cta', 'Calls to Action', ic('send'), /\b(cta|call.to.action|get.started|sign.?up|newsletter|waitlist|join)/, null],
+  ['features', 'Features', ic('grid-2x2'), /\b(feature|benefit|bento|how.it.works)/, null],
+  ['testimonials', 'Testimonials', ic('message-square-text'), /(testimonial|review|quote)/, /<blockquote\b/],
+  ['faq', 'FAQs', ic('circle-question-mark'), /\b(faq|accordion|question)/, /<details\b/],
+  ['galleries', 'Galleries', ic('images'), /(gallery|carousel|slider|slideshow|lightbox)/, null],
+  ['marquees', 'Marquees & Logos', ic('unfold-horizontal'), /(marquee|ticker|logo.?cloud|clients|logos)/, /@keyframes[^{]*(marquee|scroll|ticker)/],
+  ['stats', 'Stats & KPIs', ic('chart-bar'), /\b(stats?|kpi|metric|counter|dashboard|chart|analytics)/, null],
+  ['backgrounds', 'Backgrounds', ic('layers-2'), /(background|gradient|shader|aurora|particles|noise|beams|spotlight)/, /<canvas\b/],
+  ['buttons', 'Buttons', ic('pointer'), /\b(button|btn)/, null],
+  ['cards', 'Cards', ic('columns-3'), /\bcards?\b/, null],
+  ['forms', 'Forms & Inputs', ic('clipboard-list'), /\b(form|input|search|login|sign.?in|contact|textarea|otp)/, /<form\b/],
+  ['toggles', 'Toggles & Checkboxes', ic('square-check'), /(toggle|switch|checkbox|radio)/, /type="?(checkbox|radio)/],
+  ['loaders', 'Loaders', ic('refresh-cw'), /(loader|loading|spinner|progress|skeleton)/, null],
+  ['dialogs', 'Dialogs & Popups', ic('message-square'), /(modal|dialog|popup|popover|tooltip|toast|drawer|sheet)/, /<dialog\b|role="dialog"/],
+  ['tabs', 'Tabs', ic('kanban'), /\b(tabs?|segmented)\b/, /role="tablist"/],
+  ['badges', 'Badges & Tags', ic('tag'), /\b(badge|chip|tag|pill)s?\b/, null],
+  ['files', 'Files & Folders', ic('folder'), /(folder|files?\b|upload|dropzone)/, null],
   ['text', 'Text Effects', 'Aa', /(text|typewriter|heading|letter|glitch|word)/, null],
-  ['other', 'Other', '…', null, null],
+  ['other', 'Other', ic('puzzle'), null, null],
 ];
 const CAT_V = 5;   // bump when the rules change, so saved components get sorted again
 const catName = k => (CATS.find(x => x[0] === k) || CATS[CATS.length - 1])[1];
@@ -209,7 +209,7 @@ function renderCats() {
   const pool = comps.list.filter(c => comps.filter === 'All' || c.collection === comps.filter);
   const counts = {}; pool.forEach(c => { const k = compCat(c); counts[k] = (counts[k] || 0) + 1; });
   if (LIB.cat !== 'all' && !counts[LIB.cat]) LIB.cat = 'all';
-  nav.innerHTML = `<button data-cat="all" class="${LIB.cat === 'all' ? 'on' : ''}"><i>▤</i><span>All components</span><small>${pool.length}</small></button>` +
+  nav.innerHTML = `<button data-cat="all" class="${LIB.cat === 'all' ? 'on' : ''}"><i>${ic('layout-grid')}</i><span>All components</span><small>${pool.length}</small></button>` +
     CATS.filter(k => counts[k[0]]).map(([k, n, g]) => `<button data-cat="${k}" class="${LIB.cat === k ? 'on' : ''}"><i>${g}</i><span>${esc(n)}</span><small>${counts[k]}</small></button>`).join('');
   nav.querySelectorAll('[data-cat]').forEach(b => b.onclick = () => { LIB.cat = b.dataset.cat; renderComps(); });
 }
@@ -220,7 +220,7 @@ function openGear() {
   let g = $('gearSheet');
   if (!g) {
     g = document.createElement('div'); g.id = 'gearSheet'; g.className = 'gear';
-    g.innerHTML = `<div class="gear-box"><div class="gear-h"><h3>Page settings</h3><span class="found">Colours, hero and images for your page</span><button class="icon" id="gearX" title="Close (Esc)">✕</button></div><div class="gear-body" id="gearBody"></div></div>`;
+    g.innerHTML = `<div class="gear-box"><div class="gear-h"><h3>Page settings</h3><span class="found">Colours, hero and images for your page</span><button class="icon" id="gearX" title="Close (Esc)" aria-label="Close">${ic('x')}</button></div><div class="gear-body" id="gearBody"></div></div>`;
     document.body.appendChild(g);
     g.addEventListener('click', e => { if (e.target === g) closeGear(); });
     $('gearX').onclick = closeGear;
@@ -346,7 +346,7 @@ function setTheme(t, save) {
   b.setAttribute('aria-pressed', String(t === 'dark'));
   const lbl = t === 'dark' ? 'Night mode is on — switch to day' : 'Night mode';
   b.title = lbl; b.setAttribute('aria-label', lbl);
-  b.firstElementChild.textContent = t === 'dark' ? '☀' : '☾';
+  b.firstElementChild.innerHTML = ic(t === 'dark' ? 'sun' : 'moon');
 }
 prefersDark.addEventListener('change', e => { if (!store.get('reskin.theme', null)) setTheme(e.matches ? 'dark' : 'light'); });
 function toggleTheme() {
@@ -363,7 +363,7 @@ function toggleTheme() {
 }
 
 /* ---- "How it moves": what the imported design animates, and how it's built ---- */
-const MOTION_ICON = { 'split-letters': 'Aa', 'split-words': 'Ab', typewriter: '▍', scramble: '#', marquee: '⇢', 'fade-up': '↑', 'blur-in': '◌', wipe: '▧', spin: '↻', flow: '≈', pulse: '◉', zoom: '⤢', fade: '◐', reveal: '⇣', canvas: '▦', pointer: '⌖', hover: '☝', smooth: '〰', blink: '▮', custom: '✦' };
+const MOTION_ICON = { 'split-letters': 'Aa', 'split-words': 'Ab', typewriter: ic('pencil'), scramble: '#', marquee: ic('unfold-horizontal'), 'fade-up': ic('arrow-up'), 'blur-in': ic('eye-closed'), wipe: ic('panel-left'), spin: ic('rotate-cw'), flow: ic('wind'), pulse: ic('activity'), zoom: ic('search'), fade: ic('eye'), reveal: ic('arrow-down'), canvas: ic('image'), pointer: ic('pointer'), hover: ic('hand'), smooth: ic('unfold-vertical'), blink: ic('eye-closed'), custom: ic('sparkles') };
 const REPLAY = { 'split-letters': 'Your heading is re-split letter by letter with the same timing.', 'split-words': 'Your heading is re-split word by word with the same timing.',
   typewriter: 'Your title types itself out the same way.', scramble: 'Your title scrambles and settles the same way.', hover: 'Reskin’s own buttons now react like this too.' };
 function showMotion() {
@@ -372,10 +372,10 @@ function showMotion() {
   if (!g) { g = document.createElement('div'); g.id = 'motionSheet'; g.className = 'gear'; document.body.appendChild(g); g.addEventListener('click', e => { if (e.target === g || e.target.closest('[data-x]')) g.hidden = true; }); }
   g.hidden = false;
   const items = (M && M.items) || [];
-  g.innerHTML = `<div class="gear-box"><div class="gear-h"><h3>How “${esc(T ? T.name : 'this design')}” moves</h3><button class="icon" data-x title="Close">✕</button></div>
+  g.innerHTML = `<div class="gear-box"><div class="gear-h"><h3>How “${esc(T ? T.name : 'this design')}” moves</h3><button class="icon" data-x title="Close" aria-label="Close">${ic('x')}</button></div>
     <div class="gear-body mo-body">
       ${items.length ? `<p class="found">Reskin watched the design while it loaded and read its stylesheets and scripts. Here’s what moves, and how it’s made:</p>
-      ${items.map(it => `<div class="mo-item"><i>${MOTION_ICON[it.kind] || '✦'}</i><div><b>${esc(it.title)}</b><span>${esc(it.how)}</span>${REPLAY[it.kind] ? `<em>✓ ${esc(REPLAY[it.kind])}</em>` : ''}</div><small class="mo-tech ${it.tech}">${it.tech === 'js' ? 'JavaScript' : 'CSS'}</small></div>`).join('')}`
+      ${items.map(it => `<div class="mo-item"><i>${MOTION_ICON[it.kind] || ic('sparkles')}</i><div><b>${esc(it.title)}</b><span>${esc(it.how)}</span>${REPLAY[it.kind] ? `<em>${ic('check')} ${esc(REPLAY[it.kind])}</em>` : ''}</div><small class="mo-tech ${it.tech}">${it.tech === 'js' ? 'JavaScript' : 'CSS'}</small></div>`).join('')}`
       : `<p class="found">${M ? 'Nothing moves on its own in this design: it’s a still page.' : 'Load the design again to read its motion (designs sampled before this update don’t have it).'}</p>`}
       ${M && (M.libs || []).length ? `<h4>Built with</h4><div class="mo-libs">${M.libs.map(l => `<span>${esc(l)}</span>`).join('')}</div>` : ''}
       ${M && (M.ease || M.dur) ? `<h4>Its timing</h4><p class="found">${M.dur ? `Buttons and links change in about <b>${M.dur} ms</b>` : ''}${M.ease ? ` with <code>${esc(M.ease)}</code> easing` : ''}. Reskin’s own buttons, hovers and transitions now use the same rhythm.</p>` : ''}
@@ -619,7 +619,7 @@ function renderPropsPanel(box, c, owner, onChange) {
     else if (f.type === 'range') ctl = `<input type="range" id="${id}" min="${f.min}" max="${f.max}" step="${f.step}" value="${v ?? f.min}"><output>${v ?? ''}</output>`;
     else if (f.type === 'color') ctl = `<input type="color" id="${id}" value="${toHex(v || '#000000')}"><code>${esc(v || '')}</code>`;
     else if (f.type === 'image') ctl = `<div class="pp-img">${v ? `<img src="${esc(v)}" alt="">` : '<i>No picture</i>'}
-        <div class="pp-img-acts"><button class="ghost" data-up="${f.name}">Upload…</button><button class="ghost" data-url="${f.name}">Link…</button>${v ? `<button class="ghost" data-clr="${f.name}">✕</button>` : ''}</div>
+        <div class="pp-img-acts"><button class="ghost" data-up="${f.name}">Upload…</button><button class="ghost" data-url="${f.name}">Link…</button>${v ? `<button class="ghost" data-clr="${f.name}" title="Remove" aria-label="Remove">${ic('x')}</button>` : ''}</div>
         ${pool.length ? `<div class="pp-pool">${pool.map((im, i) => `<button title="${esc(im.alt || 'From your site')}" data-pool="${f.name}" data-i="${i}" style="background-image:url('${cssUrl(resolveSrc(im.src))}')"></button>`).join('')}</div>` : ''}</div>`;
     else ctl = `<input type="text" id="${id}" value="${esc(v ?? '')}">`;
     return `<div class="pp-row ${f.type}"><span class="pp-name">${esc(f.label)}${changed ? ' <em title="Changed here">•</em>' : ''}</span><div class="pp-ctl">${ctl}</div></div>`;
@@ -762,7 +762,7 @@ async function openGrab(files) {
   g.hidden = false;
   g.innerHTML = `<div class="grab-bar">
       <div><b>Grab from “${esc(GRAB.name)}”</b><span class="found" id="grabInfo">Click the part you want — a button, a card, a menu… (Alt-click uses the page normally)</span></div>
-      <div class="bx-row"><button class="ghost" id="grabUp" disabled title="Choose the part around it">⬆ Bigger</button><button class="ghost" id="grabDown" disabled title="Choose the part inside it">⬇ Smaller</button>
+      <div class="bx-row"><button class="ghost" id="grabUp" disabled title="Choose the part around it">${ic('arrow-up-from-line')} Bigger</button><button class="ghost" id="grabDown" disabled title="Choose the part inside it">${ic('arrow-down-to-line')} Smaller</button>
         <input id="grabName" placeholder="Name" style="font:inherit;font-size:13px;border:1px solid var(--line);border-radius:8px;padding:6px 9px;width:170px;background:var(--panel);color:var(--ink)">
         <button class="primary" id="grabTake" disabled style="height:36px;padding:0 14px;font-size:13.5px">Save as component</button>
         <button class="icon" id="grabX" title="Close (Esc)">✕</button></div></div>
@@ -891,7 +891,7 @@ function openColorPop(input) {
     <div class="cp-sv"><i class="cp-knob"></i></div>
     <input class="cp-hue" type="range" min="0" max="360" step="1" aria-label="Hue">
     <div class="cp-row"><span class="cp-now"></span><input class="cp-hex" spellcheck="false" maxlength="7" aria-label="Hex colour">
-      ${window.EyeDropper ? '<button type="button" class="ghost cp-drop" title="Pick a colour from the screen">⌖</button>' : ''}
+      ${window.EyeDropper ? '<button type="button" class="ghost cp-drop" title="Pick a colour from the screen" aria-label="Pick a colour from the screen">' + ic('pointer') + '</button>' : ''}
       <button type="button" class="primary cp-ok">Done</button></div>`;
   document.body.appendChild(pop);
   const q = sel => pop.querySelector(sel), sv = q('.cp-sv'), knob = q('.cp-knob'), hue = q('.cp-hue'), hex = q('.cp-hex'), now = q('.cp-now');

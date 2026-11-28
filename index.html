@@ -30,6 +30,9 @@
     color-scheme:dark;
   }
   [hidden]{display:none!important}
+  /* Rune icons (icons.js): sized and aligned with the text they sit in */
+  .ic{width:1.15em;height:1.15em;vertical-align:-.2em;flex:none;display:inline-block}
+  .ic-on path{fill:currentColor}
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 var(--font-b);transition:background-color .4s,color .4s;-webkit-font-smoothing:antialiased}
   button{font:inherit;cursor:pointer}
@@ -263,10 +266,10 @@
     .modal{padding:0}.mbar{border-radius:0}.mstage{border-radius:0}
   }
 </style>
-<link rel="stylesheet" href="builder.css?v=20261127d">
-<link rel="stylesheet" href="studio.css?v=20261127d">
-<link rel="stylesheet" href="inspect.css?v=20261127d">
-<link rel="stylesheet" href="pages.css?v=20261127d">
+<link rel="stylesheet" href="builder.css?v=20261127e">
+<link rel="stylesheet" href="studio.css?v=20261127e">
+<link rel="stylesheet" href="inspect.css?v=20261127e">
+<link rel="stylesheet" href="pages.css?v=20261127e">
 </head>
 <body>
 <header class="top">
@@ -277,7 +280,7 @@
     <button data-view="library">Library <span id="savedCount"></span></button>
   </div>
   <button class="look-pill" id="lookBtn" hidden aria-pressed="true" title="Reskin is wearing your page’s style">Page style</button>
-  <button class="theme-btn" id="themeBtn" type="button" aria-label="Night mode" aria-pressed="false" title="Night mode"><span aria-hidden="true">☾</span></button>
+  <button class="theme-btn" id="themeBtn" type="button" aria-label="Night mode" aria-pressed="false" title="Night mode"><span aria-hidden="true"></span></button>
 </header>
 
 <section class="intro">
@@ -352,15 +355,16 @@
 <!-- Asset version: bump ?v= on every deploy, so a fresh page never runs scripts the browser cached from the last one
      (GitHub Pages lets browsers keep files for 10 minutes). #toast stays for scripts cached before the message stack. -->
 <div id="toast" hidden></div>
-<script src="engine.js?v=20261127d"></script>
-<script src="app.js?v=20261127d"></script>
-<script src="builder.js?v=20261127d"></script>
-<script src="studio.js?v=20261127d"></script>
-<script src="shell.js?v=20261127d"></script>
-<script src="inspect.js?v=20261127d"></script>
-<script src="grab.js?v=20261127d"></script>
-<script src="pages.js?v=20261127d"></script>
-<script src="config.js?v=20261127d"></script>
-<script src="cloud.js?v=20261127d"></script>
+<script src="icons.js?v=20261127e"></script>
+<script src="engine.js?v=20261127e"></script>
+<script src="app.js?v=20261127e"></script>
+<script src="builder.js?v=20261127e"></script>
+<script src="studio.js?v=20261127e"></script>
+<script src="shell.js?v=20261127e"></script>
+<script src="inspect.js?v=20261127e"></script>
+<script src="grab.js?v=20261127e"></script>
+<script src="pages.js?v=20261127e"></script>
+<script src="config.js?v=20261127e"></script>
+<script src="cloud.js?v=20261127e"></script>
 </body>
 </html>

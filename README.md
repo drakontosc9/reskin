@@ -64,3 +64,9 @@ npx wrangler deploy
 
 Add the page address(es) that may use it to `ALLOWED_ORIGINS` in `wrangler.toml`, and set the
 Worker address in `DEFAULT_PROXY` in `app.js` (or in the Components tab's *Link proxy* field).
+
+## Credits
+
+Interface icons: [Rune Icons](https://www.runeicons.com) (outline style), © 2026 Rune Icons Team, licensed under the
+[Apache License 2.0](https://github.com/Runeicons/runeicons/blob/main/LICENSE). Inlined in `icons.js`, with their line
+colour switched to `currentColor` so they follow the text colour and night mode.

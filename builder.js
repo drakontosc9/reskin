@@ -56,7 +56,7 @@ function paintSave(fresh) {
   const el = $('stSave'); if (!el) return;
   const k = SAVE.state;
   el.className = 'st-save' + (k === 'full' ? ' warn' : k === 'almost' ? ' near' : '');
-  el.textContent = k === 'full' ? '⚠ Not saved — storage is full' : k === 'almost' ? '✓ Saved · storage almost full' : '✓ Saved';
+  el.innerHTML = k === 'full' ? ic('triangle-alert') + ' Not saved — storage is full' : ic('check') + (k === 'almost' ? ' Saved · storage almost full' : ' Saved');
   el.title = k === 'full' ? 'Your browser has no room left for this page. Click to download your site so nothing is lost.' : k === 'almost' ? 'Your browser’s storage is nearly full — download your site to keep a copy' : 'Your page is saved in this browser';
   clearTimeout(SAVE.t);
   if (k === 'ok') { if (!fresh) el.classList.add('quiet'); else SAVE.t = setTimeout(() => el.classList.add('quiet'), 1200); }
@@ -229,11 +229,11 @@ function badgesFor(b) {
   const r = b.rules || {}, out = [];
   if (b.kind === 'comp') out.push(`<span class="bx-badge acc">Component</span>`);
   if (b.replaces) out.push(`<span class="bx-badge">replaces “${esc(labelOfRef(b.replaces))}”</span>`);
-  if (r.device === 'mobile') out.push('<span class="bx-badge blue">📱 Mobile only</span>');
-  if (r.device === 'desktop') out.push('<span class="bx-badge blue">🖥 Desktop only</span>');
+  if (r.device === 'mobile') out.push('<span class="bx-badge blue">' + ic('tablet') + ' Mobile only</span>');
+  if (r.device === 'desktop') out.push('<span class="bx-badge blue">' + ic('laptop') + ' Desktop only</span>');
   if (r.start === 'scroll') out.push(`<span class="bx-badge blue">after ${r.scroll}% scroll</span>`);
   if (r.start === 'delay') out.push(`<span class="bx-badge blue">after ${r.delay}s</span>`);
-  if (r.from || r.to) out.push(`<span class="bx-badge blue">📅 ${esc(r.from || '…')} → ${esc(r.to || '…')}</span>`);
+  if (r.from || r.to) out.push(`<span class="bx-badge blue">${ic('calendar')} ${esc(r.from || '…')} → ${esc(r.to || '…')}</span>`);
   if (b.hidden) out.push('<span class="bx-badge">hidden</span>');
   return out.join('');
 }
@@ -302,7 +302,7 @@ function renderBlockList() {
     <div class="blk ${B.sel === b.id ? 'on' : ''} ${b.hidden ? 'off' : ''}" draggable="true" data-id="${b.id}">
       <span class="grip" title="Drag to move">⋮⋮</span>
       <div class="bl"><span class="kind">${b.kind === 'comp' ? esc((compById(b.compId) || {}).source || 'component') : b.ref === 'hero' ? 'your hero' : 'your section'}</span><b>${esc(b.label)}</b><div class="bx-row">${badgesFor(b)}</div></div>
-      <div class="acts"><button data-up title="Move up" ${i === 0 ? 'disabled' : ''}>▲</button><button data-down title="Move down" ${i === p.blocks.length - 1 ? 'disabled' : ''}>▼</button>${b.kind === 'comp' ? '<button data-del title="Remove this component" class="del">✕</button>' : ''}</div>
+      <div class="acts"><button data-up title="Move up" aria-label="Move up" ${i === 0 ? 'disabled' : ''}>${ic('chevron-up')}</button><button data-down title="Move down" aria-label="Move down" ${i === p.blocks.length - 1 ? 'disabled' : ''}>${ic('chevron-down')}</button>${b.kind === 'comp' ? '<button data-del title="Remove this component" class="del">✕</button>' : ''}</div>
     </div>`).join('');
   let dragId = null;
   list.querySelectorAll('.blk').forEach(el => {
@@ -543,7 +543,7 @@ function renderCompView() {
     <div class="cv-main">
       <div class="bx-panel"><div class="bx-h"><h3>${esc(c.name)} <small>· ${esc(c.source)}${c.collection ? ' · ' + esc(c.collection) : ''}</small></h3>
         <div class="bx-row"><div class="seg" id="cvDev"><button data-d="desktop" class="${B.compDevice === 'desktop' ? 'on' : ''}">Desktop</button><button data-d="mobile" class="${B.compDevice === 'mobile' ? 'on' : ''}">Mobile</button></div>
-        <button class="ghost ${INS.on ? 'on' : ''}" id="cvInspect" aria-pressed="${INS.on}" style="height:34px;padding:0 14px;font-size:13px" title="Click any part of it and change it — Reskin rewrites its code">◎ Inspect &amp; edit</button>
+        <button class="ghost ${INS.on ? 'on' : ''}" id="cvInspect" aria-pressed="${INS.on}" style="height:34px;padding:0 14px;font-size:13px" title="Click any part of it and change it — Reskin rewrites its code">${ic('search')} Inspect &amp; edit</button>
         <button class="primary" id="cvAdd" style="height:34px;padding:0 14px;font-size:13px">Add to my site →</button>
         <button class="ghost cv-remove" id="cvRemove" style="height:34px;padding:0 12px;font-size:13px" title="Remove it from your Library">Remove</button></div>
         ${adoptBox('cvAdopt')}</div>

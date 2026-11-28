@@ -239,14 +239,14 @@ function modalPickButton() {
   let b = $('mPick'); if (b) return b;
   b = document.createElement('button'); b.className = 'ghost'; b.id = 'mPick'; b.type = 'button';
   b.title = 'Click any part of this page — a menu, a hero, a card, a button — to save it to your Library';
-  b.textContent = '✚ Save a part';
+  b.innerHTML = ic('import') + ' Save a part';
   $('mVar').before(b);
   b.onclick = () => MPICK.on ? closeModalPick(true) : openModalPick();
   return b;
 }
 function paintModalPick() {
   const b = modalPickButton(); b.classList.toggle('on', MPICK.on); b.setAttribute('aria-pressed', MPICK.on);
-  b.textContent = MPICK.on ? '✓ Done saving' : '✚ Save a part';
+  b.innerHTML = MPICK.on ? ic('check') + ' Done saving' : ic('import') + ' Save a part';
   let hint = $('mPickHint');
   if (MPICK.on && !hint) { hint = document.createElement('div'); hint.id = 'mPickHint'; hint.className = 'mpick-hint'; hint.innerHTML = 'Click any part to save it to your Library · <kbd>↑</kbd> bigger part · <kbd>↓</kbd> smaller · <kbd>Esc</kbd> done'; $('mStage').before(hint); }
   if (!MPICK.on && hint) hint.remove();
@@ -315,7 +315,7 @@ renderTargetCard = function () {
   const t = state.tgt, pv = $('tPrev');
   if (t && t.viewHtml && pv && !$('tParts')) {
     const b = document.createElement('button'); b.type = 'button'; b.className = 'ghost tparts'; b.id = 'tParts';
-    b.textContent = '✚ Save parts of it'; b.title = 'Open this design and click any part of it — a menu, a hero, a card — to save it to your Library';
+    b.innerHTML = ic('import') + ' Save parts of it'; b.title = 'Open this design and click any part of it — a menu, a hero, a card — to save it to your Library';
     b.onclick = openDesignForParts; pv.after(b);
   }
   return r;
